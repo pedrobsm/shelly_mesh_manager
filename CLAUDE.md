@@ -30,13 +30,21 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 ### Commands
 `make dev` · `make build` · `make demo` · `make up` · `make test` (pytest + tsc).
 
+## Issue tracking
+
+Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9
+and #10; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them with what each one still
+needs. The available GitHub tooling cannot create milestones — see below.
+
 ## Manual work handed over
 
-- [ ] **Verify `make demo` on a machine with Docker registry access.** The image could not be
-      built in the dev container: the egress policy returns 403 for
+- [ ] **Create the milestone *Phase 1 — discovery, inventory, graph* and attach #1–#10.**
+      Issues and labels can be created from a session; milestones cannot.
+- [ ] **Verify `make demo` on a machine with Docker registry access** (#9). The image could not
+      be built in the dev container: the egress policy returns 403 for
       `production.cloudfront.docker.com`, so `node:20-alpine` / `python:3.12-slim` cannot be
       pulled. The identical stack was verified natively instead (Vite build served by FastAPI
       with `DEMO_MODE=true`, headless-Chromium render of the fixture network, zero console
-      errors) — see the Phase 1 milestone issues.
-- [ ] **Real-LAN testing** (mDNS discovery, range-scan fallback, auth-protected device,
+      errors).
+- [ ] **Real-LAN testing** (#2–#7: mDNS discovery, range-scan fallback, auth-protected device,
       offline device, 40-device timing, snapshot-on-change). File bugs as issues.
