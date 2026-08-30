@@ -98,6 +98,15 @@ do not expose the port to an untrusted network.
   **Orthogonal** (a wiring-diagram look: every connection gets its own vertical
   channel). Both draw each connection separately; neither bundles edges into a
   shared trunk.
+- **Labels** — *Always show labels* off draws a command label only while the
+  pointer is on its edge (the selected edge keeps its label), which clears most
+  of the clutter on a busy network.
+- **Positions** — *Save positions* controls whether dragging a node writes to
+  `node_layout`. On (the default) positions survive a restart; off lets you
+  rearrange the canvas without committing anything.
+
+The view toggles are remembered per browser in `localStorage`; the server keeps
+only the node positions.
 
 Full semantics: `docs/SPEC.md` §1–§3.
 

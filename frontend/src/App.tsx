@@ -10,21 +10,47 @@ import Toolbar from './components/Toolbar';
 const EMPTY_GRAPH: Graph = { nodes: [], edges: [] };
 const POLL_MS = 700;
 
+/** View toggles are per-browser preferences, so they live in localStorage. */
+const OPTIONS_KEY = 'shelly-mesh-manager.view-options';
+const DEFAULT_OPTIONS: ViewOptions = {
+  showInactive: false,
+  showExternal: true,
+  search: '',
+  routing: 'direct',
+  labels: 'always',
+  saveLayout: true,
+};
+
+function loadOptions(): ViewOptions {
+  try {
+    const stored = window.localStorage.getItem(OPTIONS_KEY);
+    if (!stored) return DEFAULT_OPTIONS;
+    // The search box always starts empty; everything else is remembered.
+    return { ...DEFAULT_OPTIONS, ...(JSON.parse(stored) as Partial<ViewOptions>), search: '' };
+  } catch {
+    return DEFAULT_OPTIONS;
+  }
+}
+
 export default function App() {
   const [graph, setGraph] = useState<Graph>(EMPTY_GRAPH);
   const [devices, setDevices] = useState<Record<string, Device>>({});
   const [demo, setDemo] = useState(false);
-  const [options, setOptions] = useState<ViewOptions>({
-    showInactive: false,
-    showExternal: true,
-    search: '',
-    routing: 'direct',
-  });
+  const [options, setOptions] = useState<ViewOptions>(loadOptions);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
+
+  useEffect(() => {
+    try {
+      const { search: _search, ...persisted } = options;
+      window.localStorage.setItem(OPTIONS_KEY, JSON.stringify(persisted));
+    } catch {
+      /* private mode / storage disabled */
+    }
+  }, [options]);
 
   const refresh = useCallback(async () => {
     const [nextGraph, deviceList] = await Promise.all([api.graph(), api.devices()]);

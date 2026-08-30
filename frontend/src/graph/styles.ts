@@ -106,6 +106,11 @@ export function stylesheet(): Stylesheet[] {
         'radius-type': 'arc-radius',
       } as any,
     },
+    // Labels on hover only (issue #15): hidden until the pointer is on the edge,
+    // and always shown for the edge the user has selected.
+    { selector: 'edge.labels-hover', style: { label: '' } },
+    { selector: 'edge.labels-hover.hovered', style: { label: 'data(label)' } },
+    { selector: 'edge.labels-hover:selected', style: { label: 'data(label)' } },
     { selector: 'edge.status-disabled', style: { 'line-style': 'dashed', opacity: 0.65 } },
     { selector: 'edge.status-unparsed', style: { 'line-style': 'dotted' } },
     { selector: 'edge.status-dangling', style: { width: 2 } },

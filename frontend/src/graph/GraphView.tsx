@@ -11,12 +11,16 @@ cytoscape.use(dagre);
 
 /** How connections are drawn (issue #14). */
 export type EdgeRouting = 'direct' | 'orthogonal';
+/** When command labels are drawn (issue #15). */
+export type LabelMode = 'always' | 'hover';
 
 export type ViewOptions = {
   showInactive: boolean;
   showExternal: boolean;
   search: string;
   routing: EdgeRouting;
+  labels: LabelMode;
+  saveLayout: boolean;
 };
 
 /** Perpendicular offset between two curves leaving the same port, in px. */
@@ -186,6 +190,7 @@ function buildElements(
       classes: [
         `status-${edge.status}`,
         `routing-${options.routing}`,
+        options.labels === 'hover' ? 'labels-hover' : '',
         edge.source === edge.target ? 'loop' : '',
       ]
         .filter(Boolean)
@@ -256,6 +261,9 @@ export default function GraphView({
   const cyRef = useRef<cytoscape.Core | null>(null);
   const graphRef = useRef(graph);
   graphRef.current = graph;
+  // The Cytoscape handlers are registered once, so they read the live options here.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   useEffect(() => {
     if (!container.current || cyRef.current) return;
@@ -293,7 +301,10 @@ export default function GraphView({
     cy.on('position', 'node', (event) => {
       applyOrthogonalGeometry(cy, event.target.connectedEdges());
     });
+    cy.on('mouseover', 'edge', (event) => event.target.addClass('hovered'));
+    cy.on('mouseout', 'edge', (event) => event.target.removeClass('hovered'));
     cy.on('dragfree', 'node', (event) => {
+      if (!optionsRef.current.saveLayout) return;
       const node = event.target;
       void api
         .saveLayout([{ node_id: node.id(), x: node.position('x'), y: node.position('y') }])
@@ -331,7 +342,7 @@ export default function GraphView({
     });
     applyOrthogonalGeometry(cy);
     if (unplaced.length > 0) {
-      runLayout(cy, true);
+      runLayout(cy, options.saveLayout);
     } else {
       cy.fit(undefined, 40);
     }
@@ -340,7 +351,7 @@ export default function GraphView({
   // Explicit "Re-layout" button.
   useEffect(() => {
     if (relayoutToken === 0 || !cyRef.current) return;
-    runLayout(cyRef.current, true);
+    runLayout(cyRef.current, optionsRef.current.saveLayout);
   }, [relayoutToken]);
 
   return <div className="graph-canvas" ref={container} data-testid="graph-canvas" />;

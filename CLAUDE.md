@@ -30,6 +30,9 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   `edge-distances: 'endpoints'`, otherwise the offsets are measured from node intersections
   and every path comes out skewed. The waypoints are model coordinates, so they are recomputed
   on every node `position` event and after each layout.
+- View toggles (routing, labels, save-positions, the two visibility switches) live in
+  `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
+  Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Device ids are MAC-derived and stable; IPs are not. Upserts key on the id.
 - `DATA_DIR` (dev-only, default `/data`) is the one env var not in the §3.2 table.

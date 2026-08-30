@@ -74,6 +74,22 @@ export default function Toolbar({
         />
         Show inactive actions
       </label>
+      <label className="toggle" title="Show command labels only while the pointer is on an edge">
+        <input
+          type="checkbox"
+          checked={options.labels === 'always'}
+          onChange={(event) => onOptions({ labels: event.target.checked ? 'always' : 'hover' })}
+        />
+        Always show labels
+      </label>
+      <label className="toggle" title="Store node positions so they survive a restart">
+        <input
+          type="checkbox"
+          checked={options.saveLayout}
+          onChange={(event) => onOptions({ saveLayout: event.target.checked })}
+        />
+        Save positions
+      </label>
 
       <div className="badges">
         <span className="pill">{deviceCount} devices</span>
