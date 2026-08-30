@@ -225,11 +225,6 @@ def match_command(path: str, query: Mapping[str, str]) -> CommandMatch | None:
     return None
 
 
-def looks_like_shelly(path: str, query: Mapping[str, str]) -> bool:
-    """§1.1 / §3.5.2 — a path that matches a Shelly command pattern."""
-    return match_command(path, query) is not None
-
-
 def resolve(
     raw_url: str,
     devices_by_ip: Mapping[str, DeviceRef],

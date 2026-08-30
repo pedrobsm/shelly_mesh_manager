@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -111,8 +111,12 @@ if _static is not None:
     app.mount("/assets", StaticFiles(directory=_static / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa(full_path: str) -> FileResponse:
+    async def spa(full_path: str) -> Response:
         """Serve the built SPA; all paths stay relative so Ingress can host it."""
+        if full_path.startswith("api/"):
+            return JSONResponse(
+                status_code=404, content={"error": "not_found", "detail": f"/{full_path}"}
+            )
         candidate = (_static / full_path).resolve()
         if full_path and candidate.is_file() and _static.resolve() in candidate.parents:
             return FileResponse(candidate)

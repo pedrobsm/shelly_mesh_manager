@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
-
 from .adapters.base import channel_label, slot_label
 from .db import Database
 from .models import Edge, Graph, Node, Port
-from .resolver import DeviceRef, Resolution, format_command_label, resolve
+from .resolver import DeviceRef, format_command_label, resolve
 
 EXT_PREFIX = "ext:"
 UNKNOWN_PREFIX = "unknown:"
@@ -255,18 +253,3 @@ async def build_graph(db: Database) -> Graph:
         )
 
     return Graph(nodes=list(nodes.values()), edges=edges)
-
-
-def resolution_to_dict(result: Resolution) -> dict[str, Any]:
-    """Parse result for the device drawer / edge popover."""
-    return {
-        "target_type": result.target_type,
-        "status": result.status,
-        "command": result.command,
-        "params": result.params,
-        "target_device_id": result.target_device_id,
-        "target_channel_id": result.target_channel_id,
-        "external_host": result.external_host,
-        "external_path": result.external_path,
-        "label": format_command_label(result.command, result.params, result.status),
-    }
