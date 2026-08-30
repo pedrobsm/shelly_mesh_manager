@@ -38,13 +38,14 @@ needs. The available GitHub tooling cannot create milestones — see below.
 
 ## Manual work handed over
 
-- [ ] **Create the milestone *Phase 1 — discovery, inventory, graph* and attach #1–#10.**
-      Issues and labels can be created from a session; milestones cannot.
-- [ ] **Verify `make demo` on a machine with Docker registry access** (#9). The image could not
-      be built in the dev container: the egress policy returns 403 for
-      `production.cloudfront.docker.com`, so `node:20-alpine` / `python:3.12-slim` cannot be
-      pulled. The identical stack was verified natively instead (Vite build served by FastAPI
-      with `DEMO_MODE=true`, headless-Chromium render of the fixture network, zero console
-      errors).
+- [x] **Create the milestone *Phase 1 — discovery, inventory, graph* and attach #1–#10.** Done.
+- [x] **Verify `make demo` on a machine with Docker registry access** (#9). Verified 2026-08-30:
+      `docker compose --profile demo up --build` builds the two-stage image (`node:20-alpine`
+      → `python:3.12-slim`) and serves the fixture network on :8099. `/api/health` 200
+      (`demo:true`); `/api/graph` returns 8 nodes / 7 edges; SPA + hashed assets load; bogus
+      `/api/*` paths 404; SPA deep links fall back to 200. Headless-Chromium render shows the
+      6 Shelly devices, the Home Assistant external node, the dangling `192.168.1.99` node and
+      all 7 command-labelled edges, with **zero console/page errors**.
 - [ ] **Real-LAN testing** (#2–#7: mDNS discovery, range-scan fallback, auth-protected device,
-      offline device, 40-device timing, snapshot-on-change). File bugs as issues.
+      offline device, 40-device timing, snapshot-on-change). File bugs as issues. Still the only
+      outstanding Phase 1 handover item.
