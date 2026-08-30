@@ -23,6 +23,13 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 - Node cards are drawn as SVG inside `nodeRenderer.ts`; edges anchor to port rows through
   Cytoscape `source-endpoint`/`target-endpoint` offsets. Cytoscape ignores custom endpoints on
   self-loops, hence the dedicated `edge.loop` style.
+- Two edge routings (issue #14), both drawing one line per connection: `direct` bows curves
+  apart per source port, `orthogonal` runs each edge through its own vertical channel.
+  Cytoscape's own `taxi` router ignores per-port endpoints, so orthogonal waypoints are
+  computed in `applyOrthogonalGeometry()` and fed to `round-segments` — which needs
+  `edge-distances: 'endpoints'`, otherwise the offsets are measured from node intersections
+  and every path comes out skewed. The waypoints are model coordinates, so they are recomputed
+  on every node `position` event and after each layout.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Device ids are MAC-derived and stable; IPs are not. Upserts key on the id.
 - `DATA_DIR` (dev-only, default `/data`) is the one env var not in the §3.2 table.

@@ -18,6 +18,7 @@ export default function App() {
     showInactive: false,
     showExternal: true,
     search: '',
+    routing: 'direct',
   });
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);

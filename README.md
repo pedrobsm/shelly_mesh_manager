@@ -93,6 +93,11 @@ do not expose the port to an untrusted network.
 - **Edges** — one per action URL, labelled with the normalized command
   (`on`, `off · 30s`, `open · 50%`, `set · b=80`, `?` when unparsed) and styled by
   status: solid = ok, dashed = disabled, red = dangling, amber dotted = unparsed.
+- **Edge routing** — the toolbar's *Edges* selector switches between **Direct**
+  (one curve per connection, fanned apart where several leave the same port) and
+  **Orthogonal** (a wiring-diagram look: every connection gets its own vertical
+  channel). Both draw each connection separately; neither bundles edges into a
+  shared trunk.
 
 Full semantics: `docs/SPEC.md` §1–§3.
 

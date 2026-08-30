@@ -1,5 +1,5 @@
 /** Scan button, search, view toggles, re-layout and the health badges (SPEC §3.7). */
-import type { ViewOptions } from '../graph/GraphView';
+import type { EdgeRouting, ViewOptions } from '../graph/GraphView';
 
 type Props = {
   demo: boolean;
@@ -45,6 +45,18 @@ export default function Toolbar({
         value={options.search}
         onChange={(event) => onOptions({ search: event.target.value })}
       />
+
+      <label className="toggle">
+        Edges
+        <select
+          className="select"
+          value={options.routing}
+          onChange={(event) => onOptions({ routing: event.target.value as EdgeRouting })}
+        >
+          <option value="direct">Direct</option>
+          <option value="orthogonal">Orthogonal</option>
+        </select>
+      </label>
 
       <label className="toggle">
         <input

@@ -9,11 +9,27 @@ import { stylesheet } from './styles';
 
 cytoscape.use(dagre);
 
+/** How connections are drawn (issue #14). */
+export type EdgeRouting = 'direct' | 'orthogonal';
+
 export type ViewOptions = {
   showInactive: boolean;
   showExternal: boolean;
   search: string;
+  routing: EdgeRouting;
 };
+
+/** Perpendicular offset between two curves leaving the same port, in px. */
+const BEND_SPREAD = 26;
+/**
+ * Orthogonal routing turns at a fraction of the horizontal gap between the two
+ * ports, staggered per edge so every connection gets its own vertical channel.
+ */
+const TURN_BASE = 0.22;
+const TURN_STEP = 0.09;
+const TURN_CHANNELS = 6;
+/** Labels of near-parallel edges are slid along their line so they don't stack. */
+const LABEL_LANES = 4;
 
 type Props = {
   graph: Graph;
@@ -110,18 +126,45 @@ function buildElements(
     });
   }
 
-  const endpoint = (nodeId: string, portId: string, side: 'src' | 'tgt'): string => {
+  /** Vertical offset of a port row from its node's centre, in model px. */
+  const portOffset = (nodeId: string, portId: string): number => {
     const geom = geometry.get(nodeId);
-    const x = side === 'src' ? '50%' : '-50%';
-    if (!geom) return `${x} 0px`;
+    if (!geom) return 0;
     const y = geom.portY[portId];
-    if (y === undefined) return `${x} 0px`;
-    return `${x} ${Math.round(y - geom.height / 2)}px`;
+    return y === undefined ? 0 : Math.round(y - geom.height / 2);
   };
 
-  for (const edge of graph.edges) {
-    if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
-    if (!options.showInactive && edge.status === 'disabled') continue;
+  const drawn = graph.edges.filter(
+    (edge) =>
+      visible.has(edge.source) &&
+      visible.has(edge.target) &&
+      (options.showInactive || edge.status !== 'disabled'),
+  );
+
+  // Edges are spread apart per source port (curves) and per source node
+  // (orthogonal channels) so no two connections are drawn on top of each other.
+  const portTotals = new Map<string, number>();
+  const nodeTotals = new Map<string, number>();
+  for (const edge of drawn) {
+    portTotals.set(edge.sourcePort, (portTotals.get(edge.sourcePort) ?? 0) + 1);
+    nodeTotals.set(edge.source, (nodeTotals.get(edge.source) ?? 0) + 1);
+  }
+  const portSeen = new Map<string, number>();
+  const nodeSeen = new Map<string, number>();
+
+  for (const edge of drawn) {
+    const portIndex = portSeen.get(edge.sourcePort) ?? 0;
+    portSeen.set(edge.sourcePort, portIndex + 1);
+    const nodeIndex = nodeSeen.get(edge.source) ?? 0;
+    nodeSeen.set(edge.source, nodeIndex + 1);
+
+    const portCount = portTotals.get(edge.sourcePort) ?? 1;
+    const bend = portCount > 1 ? (portIndex - (portCount - 1) / 2) * BEND_SPREAD : 0;
+    const turn = TURN_BASE + (nodeIndex % TURN_CHANNELS) * TURN_STEP;
+    const srcDy = portOffset(edge.source, edge.sourcePort);
+    const tgtDy = portOffset(edge.target, edge.targetPort);
+    const labelLane = (nodeIndex % LABEL_LANES) - (LABEL_LANES - 1) / 2;
+
     elements.push({
       group: 'edges',
       data: {
@@ -130,13 +173,75 @@ function buildElements(
         target: edge.target,
         label: edge.command,
         status: edge.status,
-        srcEp: endpoint(edge.source, edge.sourcePort, 'src'),
-        tgtEp: endpoint(edge.target, edge.targetPort, 'tgt'),
+        srcEp: `50% ${srcDy}px`,
+        tgtEp: `-50% ${tgtDy}px`,
+        srcDy,
+        tgtDy,
+        bend,
+        turn,
+        labelLane,
+        weights: '0.5',
+        distances: '0',
       },
-      classes: `status-${edge.status}${edge.source === edge.target ? ' loop' : ''}`,
+      classes: [
+        `status-${edge.status}`,
+        `routing-${options.routing}`,
+        edge.source === edge.target ? 'loop' : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
     });
   }
   return elements;
+}
+
+
+/**
+ * True port-to-port orthogonal paths.
+ *
+ * Cytoscape's taxi router lays its corners out between node boundaries and
+ * ignores custom endpoints, which leaves a diagonal stub from every port. The
+ * waypoints are therefore computed here — out of the source port, along this
+ * edge's own vertical channel, into the target port — and handed to the
+ * `segments` curve style, which does honour the endpoints.
+ */
+export function applyOrthogonalGeometry(cy: cytoscape.Core, edges?: cytoscape.EdgeCollection): void {
+  const targets = (edges ?? cy.edges()).filter('.routing-orthogonal');
+  targets.forEach((edge) => {
+    const source = edge.source();
+    const target = edge.target();
+    if (source.same(target)) return;
+
+    const sx = source.position('x') + source.width() / 2;
+    const sy = source.position('y') + (edge.data('srcDy') ?? 0);
+    const tx = target.position('x') - target.width() / 2;
+    const ty = target.position('y') + (edge.data('tgtDy') ?? 0);
+    const vx = tx - sx;
+    const vy = ty - sy;
+    const length = Math.hypot(vx, vy);
+
+    if (length < 1 || Math.abs(vy) < 1) {
+      // Already a straight horizontal run: one waypoint on the line itself.
+      edge.data({ weights: '0.5', distances: '0' });
+      return;
+    }
+
+    const turnX = sx + (edge.data('turn') ?? 0.5) * vx;
+    const project = (px: number, py: number) => {
+      const rx = px - sx;
+      const ry = py - sy;
+      return {
+        weight: (rx * vx + ry * vy) / (length * length),
+        distance: (ry * vx - rx * vy) / length,
+      };
+    };
+    const first = project(turnX, sy);
+    const second = project(turnX, ty);
+    edge.data({
+      weights: `${first.weight.toFixed(4)} ${second.weight.toFixed(4)}`,
+      distances: `${first.distance.toFixed(2)} ${second.distance.toFixed(2)}`,
+    });
+  });
 }
 
 export default function GraphView({
@@ -185,6 +290,9 @@ export default function GraphView({
         cy.elements().removeClass('faded chain');
       }
     });
+    cy.on('position', 'node', (event) => {
+      applyOrthogonalGeometry(cy, event.target.connectedEdges());
+    });
     cy.on('dragfree', 'node', (event) => {
       const node = event.target;
       void api
@@ -221,6 +329,7 @@ export default function GraphView({
       const stored = graph.nodes.find((candidate) => candidate.id === node.id())?.position;
       return !stored && !remembered.has(node.id());
     });
+    applyOrthogonalGeometry(cy);
     if (unplaced.length > 0) {
       runLayout(cy, true);
     } else {
@@ -240,6 +349,7 @@ export default function GraphView({
 function runLayout(cy: cytoscape.Core, persist: boolean): void {
   const layout = cy.layout(LAYOUT);
   layout.one('layoutstop', () => {
+    applyOrthogonalGeometry(cy);
     cy.fit(undefined, 40);
     if (!persist) return;
     const entries = cy.nodes().map((node) => ({
