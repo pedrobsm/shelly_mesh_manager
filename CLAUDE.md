@@ -33,9 +33,9 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 ## Issue tracking
 
 Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9
-and #10; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN results and 3
-new bugs (A/B/C) are in `docs/PHASE1-REALLAN.md`. GitHub tooling in-session is currently
-**read-only** (cannot create milestones, issues, or comments) — those go through the handover.
+and #10; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
+bugs #11/#12/#13 and added result comments to #2/#3/#5/#6/#7/#10; #1/#8/#9 are closed as
+verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 
 ## Manual work handed over
 
@@ -45,11 +45,10 @@ new bugs (A/B/C) are in `docs/PHASE1-REALLAN.md`. GitHub tooling in-session is c
       load, `/api/*` 404s, SPA deep-link fallback, headless-Chromium render of the fixture
       network with **zero console/page errors**. Details in `docs/PHASE1-REALLAN.md` / #9.
 - [x] **Real-LAN testing (#2–#7)** — done 2026-08-30 against a live 15-device LAN
-      (`192.168.33.0/24`, Gen1 + Gen2). Results per DoD and 3 new bugs in
-      `docs/PHASE1-REALLAN.md`. **mDNS #2, offline #5, layout-persist #6, console #8 PASS.**
-      **#7 FAILS** (Gen1 snapshot churn — bug B). **#3 caveats** (bug C). Still open:
-- [ ] **File 3 bugs + 6 issue comments from real-LAN testing** — ready-to-paste bodies in
-      `docs/PHASE1-REALLAN.md` (bugs A/B/C for milestone Phase 1; comments on #2/#3/#5/#6/#7/#10).
+      (`192.168.33.0/24`, Gen1 + Gen2). **mDNS #2, offline #5, layout-persist #6, console #8
+      PASS.** **#7 FAILS** (Gen1 snapshot churn — #12). **#3 caveats** (#13). Bugs #11/#12/#13
+      filed, comments on #2/#3/#5/#6/#7/#10, #1/#8/#9 closed. See `docs/PHASE1-REALLAN.md`.
+- [ ] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node).**
 - [ ] **DoD #4** — needs a Shelly with authentication enabled (none on the tested LAN).
 - [ ] **Gen3 discovery (#2)** and **40-device scan timing (#6)** — no Gen3 / no 40-device LAN
       available during testing.

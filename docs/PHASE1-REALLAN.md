@@ -13,9 +13,9 @@ Hardware present:
 No Gen3 and no auth-enabled device were available, so DoD #4 and the Gen3 half
 of #2 are still open.
 
-GitHub note: the tooling in the session that ran this is **read-only** for
-issues, so the issue edits below (3 new bugs, comments on #2/#3/#5/#6/#7/#10)
-must be filed by hand. Ready-to-paste bodies are in this file.
+Issues filed 2026-08-30: bugs **#11** (was "A"), **#12** ("B"), **#13** ("C"),
+all on the Phase 1 milestone. Real-LAN comments added to #2/#3/#5/#6/#7/#10.
+#1/#8/#9 closed as verified.
 
 ---
 
@@ -36,9 +36,9 @@ Concurrency: `POST /api/scan` correctly returns **409** while a manual scan runs
 
 ---
 
-## New bugs to file
+## New bugs (filed — #11 / #12 / #13)
 
-### Bug #A — Startup scan bypasses ScanManager (concurrent scans, no 409 on boot)
+### Bug #A → #11 — Startup scan bypasses ScanManager (concurrent scans, no 409 on boot)
 
 **Labels:** `bug`, `phase-1` · **Milestone:** Phase 1
 
@@ -65,7 +65,7 @@ Fix: `app.state.startup_scan = asyncio.create_task(scans.start())` (and expose t
 inner task for shutdown). Regression test: `POST /api/scan` → 409 while the
 startup task runs.
 
-### Bug #B — Gen1 config snapshot churns on every scan (volatile `/settings` fields)
+### Bug #B → #12 — Gen1 config snapshot churns on every scan (volatile `/settings` fields)
 
 **Labels:** `bug`, `phase-1`, `needs-hardware` · **Milestone:** Phase 1 · relates to #7
 
@@ -88,7 +88,7 @@ the Gen1 snapshot path. Add a test: two `store_snapshot` calls with only volatil
 fields differing produce **one** row. Check the Gen2 path for the same (it looked
 clean here but `Shelly.GetStatus`-style fields would bite).
 
-### Bug #C — Resolver: un-inventoried Shelly path with a non-`turn` query is classified `external`, not `unknown_shelly`
+### Bug #C → #13 — Resolver: un-inventoried Shelly path with a non-`turn` query is classified `external`, not `unknown_shelly`
 
 **Labels:** `bug`, `phase-1`, `spec` · **Milestone:** Phase 1 · relates to #10
 
@@ -116,7 +116,7 @@ removes the split node.
 
 ---
 
-## Comments to add to existing issues
+## Comments added to existing issues
 
 **#2** — mDNS PASS (`method=mdns`, 15/15 devices, ~12 s). Range-scan fallback PASS
 (`SCAN_SUBNET`, 15/15) but ~56 s for a /24 — every dead IP burns the full
