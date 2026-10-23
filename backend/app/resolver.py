@@ -51,6 +51,27 @@ class DeviceRef:
         return None
 
 
+# Gen1 path head -> candidate channel kinds, most specific first.
+GEN1_PATH_KINDS: dict[str, tuple[str, ...]] = {
+    "relay": ("relay",),
+    "roller": ("roller", "cover"),
+    "light": ("light", "rgbw", "white"),
+    "white": ("white", "light"),
+    "color": ("rgbw", "light"),
+}
+
+# Gen2/3 RPC methods of the §3.5 table -> candidate channel kinds.
+RPC_METHOD_KINDS: dict[str, tuple[str, ...]] = {
+    "switch.set": ("relay",),
+    "switch.toggle": ("relay",),
+    "cover.open": ("cover", "roller"),
+    "cover.close": ("cover", "roller"),
+    "cover.stop": ("cover", "roller"),
+    "cover.gotoposition": ("cover", "roller"),
+    "light.set": ("light", "rgbw", "white"),
+}
+
+
 @dataclass(frozen=True)
 class CommandMatch:
     """A path that matched a row of the §3.5 pattern table."""
@@ -151,6 +172,25 @@ def _on_flag(value: str | None) -> str | None:
     return None
 
 
+def match_shelly_path(path: str, query: Mapping[str, str]) -> tuple[tuple[str, ...], int] | None:
+    """Does this path have the *shape* of a Shelly command, whatever the query?
+
+    SPEC §3.5 rule 3 says to match by path shape only, so target classification
+    (§1.1 / §3.5 rule 2) uses this: `/light/0?dim=up` is as much a Shelly URL as
+    `/light/0?turn=on`, and both must land on the same node (issue #13). Which
+    command it carries is a separate question, answered by match_command().
+    """
+    segs = _segments(path)
+    if len(segs) != 2:
+        return None
+    if segs[1].isdigit() and segs[0] in GEN1_PATH_KINDS:
+        return GEN1_PATH_KINDS[segs[0]], int(segs[1])
+    if segs[0] == "rpc" and segs[1] in RPC_METHOD_KINDS:
+        idx = _num(query.get("id"))
+        return RPC_METHOD_KINDS[segs[1]], idx if isinstance(idx, int) else 0
+    return None
+
+
 def match_command(path: str, query: Mapping[str, str]) -> CommandMatch | None:
     """The §3.5 pattern table. Matches by path shape only, on every generation."""
     segs = _segments(path)
@@ -163,25 +203,22 @@ def match_command(path: str, query: Mapping[str, str]) -> CommandMatch | None:
         if head == "relay":
             command = _turn_command(query.get("turn"))
             if command:
-                return CommandMatch(("relay",), idx, command, _collect(query, {"timer": "timer"}))
+                return CommandMatch(
+                    GEN1_PATH_KINDS["relay"], idx, command, _collect(query, {"timer": "timer"})
+                )
 
         elif head == "roller":
             go = (query.get("go") or "").strip().lower()
             if go in {CMD_OPEN, CMD_CLOSE, CMD_STOP}:
                 return CommandMatch(
-                    ("roller", "cover"), idx, go, _collect(query, {"duration": "duration"})
+                    GEN1_PATH_KINDS["roller"], idx, go, _collect(query, {"duration": "duration"})
                 )
 
         elif head in {"light", "white", "color"}:
             command = _turn_command(query.get("turn"))
             if command:
-                kinds = {
-                    "light": ("light", "rgbw", "white"),
-                    "white": ("white", "light"),
-                    "color": ("rgbw", "light"),
-                }[head]
                 params = _collect(query, {"brightness": "brightness", "timer": "timer"})
-                return CommandMatch(kinds, idx, command, params)
+                return CommandMatch(GEN1_PATH_KINDS[head], idx, command, params)
 
         return None
 
@@ -235,6 +272,8 @@ def resolve(
     host, path, query = split_url(raw_url)
     norm_path = _norm_path(path)
     match = match_command(path, query)
+    # Classification goes by path shape; the query only decides the command (#13).
+    shape = match_shelly_path(path, query)
     device = devices_by_ip.get(host)
 
     result = Resolution(
@@ -255,9 +294,11 @@ def resolve(
         result.target_type = "device"
         result.target_device_id = device.id
         if match is None:
-            # Device target, pattern not matched -> keep the edge, label '?'.
+            # Device target, no table row matched -> keep the edge, label '?'.
             result.command = CMD_OTHER
             result.params = {}
+            result.target_channel_kind = None
+            result.target_channel_idx = None
             result.status = "unparsed"
             return result
 
@@ -273,11 +314,19 @@ def resolve(
         result.status = "ok" if slot_enabled else "disabled"
         return result
 
-    if match is not None:
-        # Looks like a Shelly, but the host is not inventoried.
+    if shape is not None:
+        # Looks like a Shelly, but the host is not inventoried. A query the table
+        # does not cover leaves the command 'other'; the target is the same ghost
+        # node either way, so one host never splits across two nodes.
+        kinds, idx = shape
         result.target_type = "unknown_shelly"
         result.external_host = host
         result.external_path = norm_path
+        if match is None:
+            result.command = CMD_OTHER
+            result.params = {}
+            result.target_channel_kind = kinds[0]
+            result.target_channel_idx = idx
         result.status = "dangling"
         return result
 

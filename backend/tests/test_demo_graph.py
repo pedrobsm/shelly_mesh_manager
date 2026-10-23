@@ -123,3 +123,49 @@ def test_garage_unparsed_edge(graph):
 def test_every_edge_status_is_exercised(graph):
     assert {e.status for e in graph.edges} == {"ok", "disabled", "dangling", "unparsed"}
     assert {n.type for n in graph.nodes} == {"shelly", "external", "unknown_shelly"}
+
+
+@pytest.mark.asyncio
+async def test_one_ghost_node_per_host_whatever_the_query(tmp_path):
+    """Issue #13: a host must not split into an external node *and* a ghost."""
+    from app.adapters.base import DeviceInventory, InventoryChannel, InventorySlot
+    from app.discovery import store_inventory
+
+    db = Database(tmp_path / "mesh.db")
+    await db.connect()
+    await store_inventory(
+        db,
+        DeviceInventory(
+            id="shellyix3-bedroom",
+            ip="192.168.33.22",
+            gen=1,
+            model="SHIX3-1",
+            name="Bedroom switches",
+            channels=[InventoryChannel("relay", 0)],
+            slots=[
+                InventorySlot(
+                    id="shellyix3-bedroom:act:shortpush_url:0",
+                    source_kind="input",
+                    source_idx=0,
+                    event="shortpush",
+                    native_key="shortpush_url",
+                    enabled=True,
+                    urls=[
+                        "http://192.168.33.25/light/0?turn=toggle",
+                        "http://192.168.33.25/light/0?dim=up&step=25",
+                        "http://192.168.33.25/light/0?dim=down&step=25",
+                    ],
+                )
+            ],
+        ),
+    )
+    await rebuild_edges(db)
+    result = await build_graph(db)
+    await db.close()
+
+    ghosts = [n for n in result.nodes if n.type == "unknown_shelly"]
+    assert [n.id for n in ghosts] == ["unknown:192.168.33.25"]
+    assert [n.id for n in result.nodes if n.type == "external"] == []
+    assert {e.target for e in result.edges} == {"unknown:192.168.33.25"}
+    assert {e.status for e in result.edges} == {"dangling"}
+    assert sorted(e.command for e in result.edges) == ["other", "other", "toggle"]

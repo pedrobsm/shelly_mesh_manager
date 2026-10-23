@@ -5,7 +5,9 @@ Keep this file updated.
 ## Project state
 
 **Phase 1 (read-only: discovery + inventory + graph) is implemented and merged to `main`**
-(PR #16, 2026-10-23). Phase 2+ not started; the Phase 1 bugs #11/#12/#13 are still open.
+(PR #16, 2026-10-23). Bugs #11/#12/#13 are fixed on the branch and await review; **#12 needs
+manual validation on real hardware before Phase 2 starts** (see the handover). Phase 2 not
+started.
 
 ### Layout
 ```
@@ -35,6 +37,15 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
   Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
+- Snapshot comparison ignores `VOLATILE_KEYS` (`adapters/base.py`) — Gen1 `/settings` carries a
+  clock and other per-read fields, so raw equality recorded a snapshot every scan (#12). What is
+  stored stays the verbatim dump. When a snapshot *is* kept, the changed key paths are logged at
+  INFO: that is how an unlisted volatile field gets found on real hardware.
+- Every scan goes through `ScanManager`, the boot scan included (#11); it is the only thing that
+  makes `POST /api/scan` answer 409 while one runs.
+- Target classification uses `match_shelly_path()` (path shape alone), command extraction uses
+  `match_command()` (path + query), so one host can never split into an external node and a
+  ghost (#13).
 - `POST /api/devices/{id}/rescan` (#17) re-reads one device through `rescan_device()` and
   rebuilds the edges; it is refused with 409 while a full scan runs. It is one endpoint beyond
   what SPEC §3.6 calls the complete Phase 1 surface — see the handover below.
@@ -62,10 +73,13 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
       (`192.168.33.0/24`, Gen1 + Gen2). **mDNS #2, offline #5, layout-persist #6, console #8
       PASS.** **#7 FAILS** (Gen1 snapshot churn — #12). **#3 caveats** (#13). Bugs #11/#12/#13
       filed, comments on #2/#3/#5/#6/#7/#10, #1/#8/#9 closed. See `docs/PHASE1-REALLAN.md`.
-- [ ] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node)** —
-      these should land before Phase 2 starts: #13 is in the resolver, which Phase 2's URL
-      generator must invert exactly (SPEC §5.2), and #11 is in the scan path that Phase 2's
-      per-device write lock builds on.
+- [x] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node).**
+      Fixed with regression tests; #11 and #13 reproduce in the suite and are verifiable here.
+- [ ] **Validate #12 on the real LAN — Phase 2 is blocked on this.** Run two or three scans of
+      an unchanged network and confirm `config_snapshots` stays at one row per Gen1 device
+      (the device drawer shows the count). If a device still churns, the backend log names the
+      field: `config changed on <id>: settings.<path>` — add that key to `VOLATILE_KEYS` in
+      `backend/app/adapters/base.py` and re-run. Then DoD #7 can be re-checked and #12 closed.
 - [ ] **Decide whether `POST /api/devices/{id}/rescan` (#17) joins SPEC §3.6**, which calls its
       endpoint list the complete Phase 1 surface. The endpoint is read-only towards devices.
 - [ ] **DoD #4** — needs a Shelly with authentication enabled (none on the tested LAN).

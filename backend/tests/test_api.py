@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import sqlite3
 import time
 
 import pytest
@@ -25,6 +26,27 @@ def app_module(tmp_path, monkeypatch):
 @pytest.fixture
 def client(app_module):
     with TestClient(app_module.app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def live_client(tmp_path, monkeypatch):
+    """A non-demo app whose scans are stubbed out — no network, no mDNS wait."""
+    monkeypatch.setenv("DEMO_MODE", "false")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SCAN_INTERVAL_MIN", "0")
+    import app.config
+    import app.main
+
+    importlib.reload(app.config)
+    importlib.reload(app.main)
+
+    async def slow_scan(db, settings, method=None, scan_id=None):
+        await asyncio.sleep(0.4)
+        return {"scan_id": scan_id, "status": "done", "found": 0, "errors": []}
+
+    monkeypatch.setattr("app.discovery.run_scan", slow_scan)
+    with TestClient(app.main.app) as test_client:
         yield test_client
 
 
@@ -107,6 +129,32 @@ def test_rescan_during_a_full_scan_is_409(client, monkeypatch):
     conflict = client.post("/api/devices/shellyplus1-hall/rescan")
     assert conflict.status_code == 409
     assert conflict.json()["error"] == "scan_running"
+
+
+def test_boot_scan_blocks_a_second_scan(live_client):
+    """Issue #11: the startup scan must hold the ScanManager, not bypass it."""
+    response = live_client.post("/api/scan")
+    assert response.status_code == 409
+    assert response.json()["error"] == "scan_running"
+
+    runs = live_client.get("/api/scan/does-not-exist")
+    assert runs.status_code == 404
+
+
+def test_boot_scan_records_exactly_one_run(live_client, tmp_path):
+    # The stubbed scan takes 0.4 s; stay well inside that while hammering.
+    codes = set()
+    for _ in range(10):
+        codes.add(live_client.post("/api/scan").status_code)
+        time.sleep(0.01)
+    assert codes == {409}
+
+    connection = sqlite3.connect(tmp_path / "mesh.db")
+    try:
+        rows = connection.execute("SELECT id FROM scan_runs").fetchall()
+    finally:
+        connection.close()
+    assert len(rows) == 1  # the boot scan, and nothing else
 
 
 def test_second_scan_while_one_runs_is_409(client, app_module, monkeypatch):

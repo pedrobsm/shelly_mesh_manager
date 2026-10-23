@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.resolver import DeviceRef, format_command_label, match_command, resolve, split_url
+from app.resolver import (
+    DeviceRef,
+    format_command_label,
+    match_command,
+    match_shelly_path,
+    resolve,
+    split_url,
+)
 
 HALL = DeviceRef(
     id="hall",
@@ -116,6 +123,66 @@ def test_roller_channel_falls_back_to_cover_kind():
     result = resolve("http://192.168.1.13/roller/0?go=stop", INVENTORY)
     assert result.target_channel_id == "garage:cover:0"
     assert result.status == "ok"
+
+
+# --- issue #13: classification by path shape, not by the query ------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://192.168.33.25/light/0?turn=toggle",
+        "http://192.168.33.25/light/0?dim=up&step=25",
+        "http://192.168.33.25/light/0?dim=down&step=25",
+        "http://192.168.33.25/relay/0",
+        "http://192.168.33.25/rpc/Switch.Set?id=0&on=maybe",
+    ],
+)
+def test_shelly_shaped_urls_to_an_unknown_host_are_one_ghost(url):
+    result = resolve(url, INVENTORY)
+    assert result.target_type == "unknown_shelly"
+    assert result.status == "dangling"
+    assert result.external_host == "192.168.33.25"
+
+
+def test_unrecognised_query_to_an_unknown_host_keeps_command_other():
+    result = resolve("http://192.168.33.25/light/0?dim=up&step=25", INVENTORY)
+    assert result.command == "other"
+    assert result.params == {}
+    # The channel is still known from the path, which the ghost node's port uses.
+    assert (result.target_channel_kind, result.target_channel_idx) == ("light", 0)
+
+
+def test_non_shelly_path_on_an_unknown_host_stays_external():
+    for url in ("http://192.168.33.25/rpc/Shelly.GetStatus", "http://192.168.33.25/status"):
+        result = resolve(url, INVENTORY)
+        assert result.target_type == "external", url
+
+
+def test_unrecognised_query_on_an_inventoried_device_is_still_unparsed():
+    # No §3.5 row covers ?dim=, so on a known device the edge keeps its '?' label.
+    result = resolve("http://192.168.1.11/light/1?dim=up&step=25", INVENTORY)
+    assert result.target_type == "device"
+    assert result.status == "unparsed"
+    assert result.target_channel_id is None
+
+
+@pytest.mark.parametrize(
+    "path,kinds,idx",
+    [
+        ("/relay/2", ("relay",), 2),
+        ("/roller/0", ("roller", "cover"), 0),
+        ("/white/3", ("white", "light"), 3),
+        ("/rpc/Cover.Open", ("cover", "roller"), 0),
+    ],
+)
+def test_match_shelly_path_ignores_the_query(path, kinds, idx):
+    assert match_shelly_path(path, {}) == (kinds, idx)
+
+
+@pytest.mark.parametrize("path", ["/", "/status", "/api/webhook/x", "/rpc/Shelly.GetStatus"])
+def test_match_shelly_path_rejects_other_paths(path):
+    assert match_shelly_path(path, {}) is None
 
 
 @pytest.mark.parametrize(
