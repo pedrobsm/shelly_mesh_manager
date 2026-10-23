@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/__pycache__
+**/.venv
+**/.mypy_cache
+**/.pytest_cache
+data
+data-demo
+.git
