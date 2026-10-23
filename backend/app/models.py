@@ -115,6 +115,12 @@ class ScanStatus(BaseModel):
     ended_at: str | None = None
 
 
+class RescanResult(BaseModel):
+    ok: bool
+    online: bool
+    error: str | None = None
+
+
 class Credentials(BaseModel):
     username: str
     password: str

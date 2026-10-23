@@ -4,7 +4,8 @@ Keep this file updated.
 
 ## Project state
 
-**Phase 1 (read-only: discovery + inventory + graph) is implemented.** Phase 2+ not started.
+**Phase 1 (read-only: discovery + inventory + graph) is implemented and merged to `main`**
+(PR #16, 2026-10-23). Phase 2+ not started; the Phase 1 bugs #11/#12/#13 are still open.
 
 ### Layout
 ```
@@ -34,6 +35,9 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
   Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
+- `POST /api/devices/{id}/rescan` (#17) re-reads one device through `rescan_device()` and
+  rebuilds the edges; it is refused with 409 while a full scan runs. It is one endpoint beyond
+  what SPEC §3.6 calls the complete Phase 1 surface — see the handover below.
 - Device ids are MAC-derived and stable; IPs are not. Upserts key on the id.
 - `DATA_DIR` (dev-only, default `/data`) is the one env var not in the §3.2 table.
 
@@ -42,8 +46,8 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 
 ## Issue tracking
 
-Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9
-and #10; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
+Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9,
+#10 and the enhancement #17; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
 bugs #11/#12/#13 and added result comments to #2/#3/#5/#6/#7/#10; #1/#8/#9 are closed as
 verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 
@@ -58,7 +62,12 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
       (`192.168.33.0/24`, Gen1 + Gen2). **mDNS #2, offline #5, layout-persist #6, console #8
       PASS.** **#7 FAILS** (Gen1 snapshot churn — #12). **#3 caveats** (#13). Bugs #11/#12/#13
       filed, comments on #2/#3/#5/#6/#7/#10, #1/#8/#9 closed. See `docs/PHASE1-REALLAN.md`.
-- [ ] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node).**
+- [ ] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node)** —
+      these should land before Phase 2 starts: #13 is in the resolver, which Phase 2's URL
+      generator must invert exactly (SPEC §5.2), and #11 is in the scan path that Phase 2's
+      per-device write lock builds on.
+- [ ] **Decide whether `POST /api/devices/{id}/rescan` (#17) joins SPEC §3.6**, which calls its
+      endpoint list the complete Phase 1 surface. The endpoint is read-only towards devices.
 - [ ] **DoD #4** — needs a Shelly with authentication enabled (none on the tested LAN).
 - [ ] **Gen3 discovery (#2)** and **40-device scan timing (#6)** — no Gen3 / no 40-device LAN
       available during testing.

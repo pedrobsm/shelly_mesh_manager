@@ -15,10 +15,13 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanNote, setRescanNote] = useState<string | null>(null);
 
   useEffect(() => {
     setDevice(null);
     setError(null);
+    setRescanNote(null);
     if (node.type !== 'shelly') return;
     let cancelled = false;
     api
@@ -33,6 +36,24 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
       cancelled = true;
     };
   }, [node]);
+
+  const rescan = async () => {
+    setRescanning(true);
+    setRescanNote(null);
+    setError(null);
+    try {
+      const result = await api.rescanDevice(node.id);
+      setDevice(await api.device(node.id));
+      onChanged();
+      setRescanNote(
+        result.ok ? 'Re-scanned.' : `${result.error ?? 'failed'}${result.online ? '' : ' — offline'}`,
+      );
+    } catch (exc) {
+      setError((exc as Error).message);
+    } finally {
+      setRescanning(false);
+    }
+  };
 
   const submitCredentials = async () => {
     setSaving(true);
@@ -60,6 +81,15 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
           ✕
         </button>
       </div>
+
+      {node.type === 'shelly' && (
+        <div className="form-row">
+          <button className="button" onClick={rescan} disabled={rescanning}>
+            {rescanning ? 'Re-scanning…' : 'Re-scan device'}
+          </button>
+          {rescanNote && <span className="muted small">{rescanNote}</span>}
+        </div>
+      )}
 
       {node.type !== 'shelly' && (
         <div className="section">

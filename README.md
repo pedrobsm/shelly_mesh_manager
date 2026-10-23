@@ -104,6 +104,9 @@ do not expose the port to an untrusted network.
 - **Positions** — *Save positions* controls whether dragging a node writes to
   `node_layout`. On (the default) positions survive a restart; off lets you
   rearrange the canvas without committing anything.
+- **Re-scan one device** — selecting a node opens its drawer, which has a
+  *Re-scan device* button: it re-reads just that device and rebuilds the edges,
+  instead of waiting for a scan of the whole network.
 
 The view toggles are remembered per browser in `localStorage`; the server keeps
 only the node positions.
@@ -119,6 +122,7 @@ GET  /api/scan/{id}                   → {status, found, errors[]}
 GET  /api/devices                     → Device[] (channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info
 POST /api/devices/{id}/credentials    → {ok}; body {username, password}; re-probes
+POST /api/devices/{id}/rescan         → {ok, online, error}; re-reads one device (409 while a scan runs)
 GET  /api/graph                       → Graph {nodes, edges}
 PUT  /api/layout                      → {ok}; body [{node_id, x, y}]
 ```

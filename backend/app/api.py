@@ -23,6 +23,7 @@ from .models import (
     Health,
     LayoutEntry,
     Ok,
+    RescanResult,
     ScanStarted,
     ScanStatus,
 )
@@ -211,6 +212,24 @@ async def set_credentials(request: Request, device_id: str, body: Credentials) -
     if error:
         raise _fail(502, "reprobe_failed", error)
     return Ok()
+
+
+@router.post("/devices/{device_id}/rescan", response_model=RescanResult)
+async def rescan(request: Request, device_id: str) -> RescanResult:
+    """Re-read one device without a full scan. Read-only towards the device."""
+    db = _db(request)
+    row = await db.fetchone("SELECT id FROM devices WHERE id = ?", (device_id,))
+    if row is None:
+        raise _fail(404, "not_found", f"no device {device_id}")
+    if _scans(request).running:
+        raise _fail(409, "scan_running", "a full scan is running; try again when it finishes")
+
+    error = await rescan_device(db, _settings(request), device_id)
+    state = await db.fetchone("SELECT online FROM devices WHERE id = ?", (device_id,))
+    # An unreachable device is a result, not a server error: the node goes offline.
+    return RescanResult(
+        ok=error is None, online=bool(state["online"]) if state is not None else False, error=error
+    )
 
 
 @router.get("/graph", response_model=Graph)

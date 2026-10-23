@@ -76,6 +76,8 @@ export type DeviceDetail = Device & {
   last_snapshot_at: string | null;
 };
 
+export type RescanResult = { ok: boolean; online: boolean; error: string | null };
+
 export type Health = { status: string; version: string; demo: boolean };
 export type ScanStatus = {
   status: 'running' | 'done' | 'error';
@@ -116,6 +118,8 @@ export const api = {
   scanStatus: (id: string) => request<ScanStatus>(`scan/${encodeURIComponent(id)}`),
   saveLayout: (entries: { node_id: string; x: number; y: number }[]) =>
     request<{ ok: boolean }>('layout', { method: 'PUT', body: JSON.stringify(entries) }),
+  rescanDevice: (id: string) =>
+    request<RescanResult>(`devices/${encodeURIComponent(id)}/rescan`, { method: 'POST' }),
   setCredentials: (id: string, username: string, password: string) =>
     request<{ ok: boolean }>(`devices/${encodeURIComponent(id)}/credentials`, {
       method: 'POST',

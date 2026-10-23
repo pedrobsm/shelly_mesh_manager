@@ -83,6 +83,32 @@ def test_scan_runs_and_reports_status(client):
     assert client.get("/api/scan/unknown").status_code == 404
 
 
+def test_rescan_single_device(client):
+    response = client.post("/api/devices/shellyplus1-hall/rescan")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "online": True, "error": None}
+    # The edge cache is rebuilt, so the graph still resolves after a single-device pass.
+    assert len(client.get("/api/graph").json()["edges"]) == 7
+
+
+def test_rescan_unknown_device_is_404(client):
+    response = client.post("/api/devices/nope/rescan")
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+
+def test_rescan_during_a_full_scan_is_409(client, monkeypatch):
+    async def slow_scan(db, settings, method=None, scan_id=None):
+        await asyncio.sleep(0.5)
+        return {"scan_id": scan_id, "status": "done", "found": 0, "errors": []}
+
+    monkeypatch.setattr("app.discovery.run_scan", slow_scan)
+    assert client.post("/api/scan").status_code == 202
+    conflict = client.post("/api/devices/shellyplus1-hall/rescan")
+    assert conflict.status_code == 409
+    assert conflict.json()["error"] == "scan_running"
+
+
 def test_second_scan_while_one_runs_is_409(client, app_module, monkeypatch):
     async def slow_scan(db, settings, method=None, scan_id=None):
         await asyncio.sleep(0.5)
