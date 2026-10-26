@@ -34,6 +34,14 @@ VOLATILE_KEYS = frozenset(
         "last_error",
         "unixtime_ms",
         "uptime_s",
+        # Live readings inside Gen1 `meters` and `rollers` (found on hardware, #12).
+        "power",
+        "counters",
+        "total",
+        "timestamp",
+        # Relay runtime state: a switch flipping is not a config change.
+        "ison",
+        "has_timer",
     }
 )
 

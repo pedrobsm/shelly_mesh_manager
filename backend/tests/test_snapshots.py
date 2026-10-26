@@ -119,3 +119,42 @@ async def test_ring_keeps_the_last_ten(db):
     for index in range(14):
         await store_snapshot(db, "dev", later_read(name=f"name-{index}"))
     assert await count(db) == 10
+
+
+def live_gen1_read() -> dict:
+    """Shapes taken from real SHSW-44 (meters, relays) and SHSW-25 (rollers) dumps."""
+    settings = {
+        "name": "Hall",
+        "time": "20:03",
+        "unixtime": 1792782236,
+        "meters": [{"power": 0.0, "is_valid": True, "timestamp": 1792785837,
+                    "counters": [0.0, 0.0, 0.0], "total": 77960}],
+        "rollers": [{"power": 4.83, "state": "stop", "maxtime": 20.0, "is_valid": True}],
+        "relays": [{"name": None, "ison": False, "has_timer": False, "auto_off": 0.0}],
+    }
+    return {"settings": settings, "actions": {}}
+
+
+@pytest.mark.asyncio
+async def test_live_meter_roller_and_relay_state_is_not_config(db):
+    first = live_gen1_read()
+    assert await store_snapshot(db, "dev", first) is True
+
+    later = live_gen1_read()
+    later["settings"]["time"] = "20:04"
+    later["settings"]["meters"][0].update(
+        power=7.6, timestamp=1792786056, counters=[7.58, 0.396, 0.0], total=77967
+    )
+    later["settings"]["rollers"][0]["power"] = 4.82
+    later["settings"]["relays"][0].update(ison=True, has_timer=True)
+    assert await store_snapshot(db, "dev", later) is False
+    assert await count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_relay_config_change_still_stores_a_snapshot(db):
+    await store_snapshot(db, "dev", live_gen1_read())
+    changed = live_gen1_read()
+    changed["settings"]["relays"][0]["auto_off"] = 30.0
+    assert await store_snapshot(db, "dev", changed) is True
+    assert await count(db) == 2
