@@ -155,3 +155,44 @@ currently drawn as identical unlabeled `other` edges. The Gen1 action key
    action is dead — likely meant `/white/3` or `/white/0`.
 3. `192.168.33.22` (SHIX3) → `http://192.168.33.25/light/0?turn=toggle` — nothing
    at `.25` → correctly `dangling` (ghost node).
+
+---
+
+## Follow-up: the three bugs, fixed and re-validated (2026-10-23 / 2026-10-26)
+
+**#11 — boot scan bypassed `ScanManager`.** Fixed: the boot scan goes through
+the manager and is awaited during startup, so `running` is true before the first
+request is served. Two regression tests (a non-demo app with a stubbed scan)
+reproduce the old `202` and the doubled `scan_runs` row.
+
+**#13 — one host split into an external node *and* a ghost.** Fixed by option
+(a): classification matches path shape alone (`match_shelly_path()`), the query
+only decides the command. The three URLs to `192.168.33.25` now land on one
+ghost node. Still open, as a spec question: §3.5 has no row for `?dim=` /
+`?brightness=`, so such a URL aimed at an inventoried dimmer resolves
+`unparsed` — now pinned by a test so the behaviour is explicit.
+
+**#12 — Gen1 snapshot churn.** Fixed in two passes.
+
+1. A denylist inferred from the Gen1 documentation (clock, uptime, free memory,
+   rssi, connection flags). Not enough on real hardware.
+2. Validated on the live LAN (2026-10-26): three untouched scans 60 s apart
+   still wrote a row on `.11` (rollers), `.34` and `.39` (meters). The
+   `config changed on <id>: …` log named the paths. The live readings inside
+   `meters[]`, `rollers[]` and `relays[]` were added, after which **three
+   untouched scans produced 0 new rows on all 11 online Gen1 devices**, and
+   renaming one device (`192.168.33.13`) produced **exactly one** row on that
+   device alone. Gen2 was stable throughout.
+
+   Afterwards the generic names (`power`, `total`, `timestamp`, `counters`,
+   `ison`, `has_timer`) were scoped to the containers they belong to, so a
+   setting that merely shares one of those names — `power` next to `max_power`,
+   or anything in a Gen2 config — is still compared and still records a
+   snapshot when it changes. `rollers[].state`, `current_pos` and `is_valid`,
+   flagged during the hardware run but not observed moving, are included.
+
+   **Worth one more 3-scan run on the LAN** to confirm the scoping did not let
+   a churning field back through; the `config changed` log names it if so.
+
+Snapshots written before the fix remain (up to 10 per device, mostly noise);
+they age out as real changes arrive.

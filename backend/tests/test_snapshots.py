@@ -158,3 +158,51 @@ async def test_relay_config_change_still_stores_a_snapshot(db):
     changed["settings"]["relays"][0]["auto_off"] = 30.0
     assert await store_snapshot(db, "dev", changed) is True
     assert await count(db) == 2
+
+
+# --- the generic names are scoped to their container ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_setting_that_merely_shares_a_live_name_is_compared(db):
+    """'power' is a live reading inside meters[], but a setting anywhere else."""
+    await store_snapshot(db, "dev", {"settings": {"name": "Lamp", "power": 10}, "actions": {}})
+    assert (
+        await store_snapshot(db, "dev", {"settings": {"name": "Lamp", "power": 25}, "actions": {}})
+        is True
+    )
+    assert await count(db) == 2
+
+
+@pytest.mark.asyncio
+async def test_gen2_config_fields_are_compared(db):
+    """Nothing in a Gen2 dump is scoped, so its settings compare verbatim."""
+    before = {"config": {"switch:0": {"name": "Hall", "power_limit": 2800, "initial_state": "off"}}}
+    await store_snapshot(db, "dev", before)
+    after = {"config": {"switch:0": {"name": "Hall", "power_limit": 1400, "initial_state": "off"}}}
+    assert await store_snapshot(db, "dev", after) is True
+    assert await count(db) == 2
+
+
+@pytest.mark.asyncio
+async def test_roller_state_and_meter_validity_are_live_state(db):
+    """The two candidates left open by the hardware run (#12)."""
+    first = live_gen1_read()
+    first["settings"]["emeters"] = [{"power": 12.4, "total": 900, "is_valid": True, "ct_type": 50}]
+    await store_snapshot(db, "dev", first)
+
+    moved = live_gen1_read()
+    moved["settings"]["rollers"][0].update(state="open", is_valid=False, current_pos=42)
+    moved["settings"]["meters"][0]["is_valid"] = False
+    moved["settings"]["emeters"] = [{"power": 31.9, "total": 905, "is_valid": False, "ct_type": 50}]
+    assert await store_snapshot(db, "dev", moved) is False
+    assert await count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_roller_setting_still_stores_a_snapshot(db):
+    await store_snapshot(db, "dev", live_gen1_read())
+    changed = live_gen1_read()
+    changed["settings"]["rollers"][0]["maxtime"] = 35.0
+    assert await store_snapshot(db, "dev", changed) is True
+    assert await count(db) == 2

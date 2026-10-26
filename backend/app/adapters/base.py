@@ -18,7 +18,9 @@ VOLATILE_KEYS = frozenset(
     {
         "time",
         "unixtime",
+        "unixtime_ms",
         "uptime",
+        "uptime_s",
         "ram_free",
         "ram_total",
         "ram_size",
@@ -32,30 +34,87 @@ VOLATILE_KEYS = frozenset(
         "serial",
         "cfg_changed_cnt",
         "last_error",
-        "unixtime_ms",
-        "uptime_s",
-        # Live readings inside Gen1 `meters` and `rollers` (found on hardware, #12).
-        "power",
-        "counters",
-        "total",
-        "timestamp",
-        # Relay runtime state: a switch flipping is not a config change.
-        "ison",
-        "has_timer",
     }
 )
 
-
-def strip_volatile(value: Any) -> Any:
-    """Recursively drop VOLATILE_KEYS so two reads can be compared for equality."""
-    if isinstance(value, dict):
-        return {
-            key: strip_volatile(item)
-            for key, item in value.items()
-            if key.lower() not in VOLATILE_KEYS
+# Live readings carried inside a device's per-channel arrays. Their names are
+# generic enough to name a real setting elsewhere ("power" next to "max_power"),
+# so they only count as volatile under these containers — a top-level or Gen2
+# field of the same name is still compared, and a genuine config change to it
+# still records a snapshot.
+VOLATILE_IN_CONTAINER: dict[str, frozenset[str]] = {
+    "meters": frozenset({"power", "counters", "total", "timestamp", "is_valid", "overpower"}),
+    "emeters": frozenset(
+        {
+            "power",
+            "counters",
+            "total",
+            "total_returned",
+            "timestamp",
+            "is_valid",
+            "voltage",
+            "current",
+            "pf",
         }
+    ),
+    "rollers": frozenset(
+        {
+            "power",
+            "state",
+            "is_valid",
+            "current_pos",
+            "last_direction",
+            "stop_reason",
+            "calibrating",
+            "positioning",
+            "overtemperature",
+            "safety_switch",
+        }
+    ),
+    "relays": frozenset(
+        {
+            "ison",
+            "has_timer",
+            "timer_started",
+            "timer_duration",
+            "timer_remaining",
+            "overpower",
+            "overtemperature",
+            "source",
+        }
+    ),
+    "lights": frozenset(
+        {
+            "ison",
+            "has_timer",
+            "power",
+            "timer_started",
+            "timer_duration",
+            "timer_remaining",
+            "overpower",
+            "source",
+        }
+    ),
+}
+
+
+def strip_volatile(value: Any, container: str = "") -> Any:
+    """Drop volatile fields so two reads of one device can be compared.
+
+    `container` is the name of the nearest enclosing array — 'meters', 'relays'
+    and so on — which is what scopes the generic names of VOLATILE_IN_CONTAINER.
+    """
+    if isinstance(value, dict):
+        scoped = VOLATILE_IN_CONTAINER.get(container, frozenset())
+        stripped: dict[str, Any] = {}
+        for key, item in value.items():
+            low = key.lower()
+            if low in VOLATILE_KEYS or low in scoped:
+                continue
+            stripped[key] = strip_volatile(item, low if isinstance(item, list) else container)
+        return stripped
     if isinstance(value, list):
-        return [strip_volatile(item) for item in value]
+        return [strip_volatile(item, container) for item in value]
     return value
 
 
