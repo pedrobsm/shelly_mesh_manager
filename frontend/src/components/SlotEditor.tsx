@@ -70,6 +70,9 @@ const EMPTY_DRAFT: Draft = {
 };
 
 export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: Props) {
+  // Creating a Gen2/3 webhook gives the slot the id the device chose, so the
+  // editor follows it rather than re-reading one that no longer exists (#33).
+  const [currentId, setCurrentId] = useState(slotId);
   const [slot, setSlot] = useState<SlotDetail | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
@@ -82,8 +85,8 @@ export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: 
   const [tests, setTests] = useState<Record<string, UrlTestResult>>({});
   const [dirty, setDirty] = useState(false);
 
-  const load = useCallback(async () => {
-    const detail = await api.slot(slotId);
+  const apply = useCallback((detail: SlotDetail) => {
+    setCurrentId(detail.id);
     setSlot(detail);
     setEnabled(detail.enabled);
     setRows(detail.urls.map(rowFromStored));
@@ -91,11 +94,22 @@ export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: 
     setDirty(false);
     setError(null);
     setMismatch(null);
+  }, []);
+
+  const load = useCallback(async () => {
+    apply(await api.slot(currentId));
+  }, [apply, currentId]);
+
+  useEffect(() => {
+    setCurrentId(slotId);
   }, [slotId]);
 
   useEffect(() => {
-    load().catch((exc: Error) => setError(exc.message));
-  }, [load]);
+    api
+      .slot(currentId)
+      .then(apply)
+      .catch((exc: Error) => setError(exc.message));
+  }, [apply, currentId]);
 
   const deviceList = useMemo(
     () => Object.values(devices).sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id)),
@@ -180,14 +194,14 @@ export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: 
     setError(null);
     setMismatch(null);
     try {
-      await api.saveSlot(slot.id, {
+      const updated = await api.saveSlot(currentId, {
         enabled,
         urls: rows.map((row) => row.spec),
         expect_revision: slot.revision,
         confirm_delete: confirmDelete,
       });
+      apply(updated);
       onSaved();
-      await load();
     } catch (exc) {
       if (exc instanceof ApiError) {
         setError(exc.message);

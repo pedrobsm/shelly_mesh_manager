@@ -270,3 +270,53 @@ async def test_writes_to_one_device_are_serialised():
         ["first-start", "first-end", "second-start", "second-end"],
         ["second-start", "second-end", "first-start", "first-end"],
     )
+
+
+# --- #33: creating a webhook on a device that has none -------------------------
+
+
+def test_creating_a_webhook_validates_the_event_and_follows_the_new_id(client, device, tmp_path):
+    new_slot = "shellyplus1-hall:newhook:input.toggle_on:0"
+    response = client.put(f"/api/slots/{new_slot}", json={"enabled": True, "urls": [BUILT]})
+    assert response.status_code == 200
+
+    created = response.json()
+    assert created["id"] == f"shellyplus1-hall:hook:{device.next_hook_id}"
+    assert device.hooks[device.next_hook_id]["event"] == "input.toggle_on"
+    assert device.hooks[device.next_hook_id]["cid"] == 0
+    assert device.hooks[device.next_hook_id]["urls"] == [BUILT_URL]
+    assert audit(tmp_path) == [("slot_update", "verified")]
+
+    # A second save goes to Update, not another Create.
+    device.requests.clear()
+    client.put(
+        f"/api/slots/{created['id']}",
+        json={"enabled": False, "urls": [BUILT], "expect_revision": created["revision"]},
+    )
+    methods = [json.loads(r.content)["method"] for r in device.writes_to("/rpc")]
+    assert "Webhook.Create" not in methods
+    assert "Webhook.Update" in methods
+    assert len(device.hooks) == 2  # the original and the one just created
+
+
+def test_an_event_the_device_does_not_support_is_refused(client, device):
+    device.handler_types = {"switch.off": {}}  # input.toggle_on is not offered
+
+    original = device.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rpc":
+            body = json.loads(request.content)
+            if body["method"] == "Webhook.ListSupported":
+                return httpx.Response(
+                    200, json={"id": body["id"], "result": {"types": {"switch.off": {}}}}
+                )
+        return original(request)
+
+    device.handler = handler
+    response = client.put(
+        "/api/slots/shellyplus1-hall:newhook:input.toggle_on:0",
+        json={"enabled": True, "urls": [BUILT]},
+    )
+    assert response.status_code == 502
+    assert "does not support" in response.json()["detail"]

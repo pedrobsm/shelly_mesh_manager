@@ -9,8 +9,7 @@ Keep this file updated.
 **Phase 2 is in progress.** Done: the §3.5 table completed, `generator.py` + the §5.2
 roundtrip suite, all of §5.1 (`GET/PUT /api/slots/{id}`, `POST /api/url/build|parse|test`,
 `GET/PUT /api/settings`), the §5.3 write adapters with verify-after-write, per-device locking
-and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6:
-the hardware pass (#21), and a way to add an action to a Gen2/3 event that has no webhook yet.
+and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6: the hardware pass (#21).
 
 ### Layout
 ```
@@ -56,6 +55,11 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 - A `raw_external` URL aimed at an inventoried device is refused — unless it is already stored
   on that slot, which lets the editor keep an unparsed URL it cannot rebuild without letting
   the client compose a new Shelly URL.
+- Gen2/3 inventory synthesizes an empty slot per supported event × component with no hook
+  (`gen2.synthetic_slots`, id `…:newhook:{event}:{cid}`), which is how the first action on a
+  Plus/Gen3 device gets added (#33). Writing one calls `Webhook.Create` and the slot is re-keyed
+  to `…:hook:{id}` with the id the device chose, so use `gen2.hook_id_of()` rather than parsing
+  the slot id by hand.
 - Ports are painted into the node's image, so Cytoscape cannot hit-test them. `slotAt()` in
   `GraphView.tsx` maps a click back to a port row using the geometry the renderer used; that is
   what opens the slot editor.

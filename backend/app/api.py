@@ -347,7 +347,8 @@ async def get_slot(request: Request, slot_id: str) -> SlotDetail:
 async def put_slot(request: Request, slot_id: str, body: SlotUpdate) -> SlotDetail:
     """Write a slot to its device, verify it, and return the state that stuck."""
     try:
-        await apply_slot_update(_db(request), _settings(request), slot_id, body)
+        # Creating a Gen2/3 webhook gives the slot the id the device chose.
+        slot_id = await apply_slot_update(_db(request), _settings(request), slot_id, body)
     except SlotWriteError as exc:
         raise HTTPException(
             status_code=exc.status,

@@ -234,3 +234,52 @@ def test_a_url_already_on_the_slot_may_be_kept_verbatim(client):
     )
     assert refused.status_code == 422
     assert refused.json()["error"] == "raw_url_targets_a_device"
+
+
+# --- #33: the first action on a Gen2/3 device ---------------------------------
+
+NEW_HOOK = "shellyplus1-hall:newhook:input.toggle_on:0"
+
+
+def test_a_gen2_device_offers_slots_for_events_with_no_webhook(client):
+    hall = client.get("/api/devices/shellyplus1-hall").json()
+    empty = [slot for slot in hall["slots"] if not slot["urls"]]
+    assert {slot["native_key"] for slot in empty} == {"switch.on", "input.toggle_on"}
+    assert all(slot["enabled"] is False for slot in empty)
+
+    # They are inactive, so the graph hides them until "Show inactive actions".
+    node = next(
+        n for n in client.get("/api/graph").json()["nodes"] if n["id"] == "shellyplus1-hall"
+    )
+    inactive = [port for port in node["outputs"] if not port["active"]]
+    assert {port["label"] for port in inactive} == {"SW1 · button on", "Relay 0 · output on"}
+
+
+def test_the_first_url_turns_an_empty_slot_into_a_real_webhook(client):
+    before = client.get(f"/api/slots/{NEW_HOOK}").json()
+    assert before["urls"] == []
+
+    saved = client.put(
+        f"/api/slots/{NEW_HOOK}",
+        json={"enabled": True, "urls": [built("toggle")], "expect_revision": before["revision"]},
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    # The device names the hook; the slot follows it.
+    assert body["id"] != NEW_HOOK
+    assert body["id"].startswith("shellyplus1-hall:hook:")
+    assert body["enabled"] is True
+    assert body["urls"][0]["raw_url"] == "http://192.168.1.11/rpc/Switch.Toggle?id=0"
+
+    assert client.get(f"/api/slots/{NEW_HOOK}").status_code == 404
+    assert client.get(f"/api/slots/{body['id']}").status_code == 200
+    edge = next(
+        e for e in client.get("/api/graph").json()["edges"] if e["sourcePort"] == body["id"]
+    )
+    assert edge["command"] == "toggle"
+
+
+def test_saving_an_empty_new_slot_asks_for_a_url_first(client):
+    response = client.put(f"/api/slots/{NEW_HOOK}", json={"enabled": True, "urls": []})
+    assert response.status_code == 422
+    assert response.json()["error"] == "nothing_to_create"

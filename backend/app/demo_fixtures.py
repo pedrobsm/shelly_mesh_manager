@@ -41,6 +41,24 @@ def _hook_slot(device_id: str, hook_id: int, event_native: str, source: str, sou
     )
 
 
+def _synthetic(device_id: str, events: list[tuple[str, str, int, str]]) -> list[InventorySlot]:
+    """Gen2/3 slots for supported events with no webhook yet — see gen2.synthetic_slots."""
+    from .adapters.gen2 import synthetic_slot_id
+
+    return [
+        InventorySlot(
+            id=synthetic_slot_id(device_id, native, cid),
+            source_kind=source,
+            source_idx=cid,
+            event=event,
+            native_key=native,
+            enabled=False,
+            urls=[],
+        )
+        for native, source, cid, event in events
+    ]
+
+
 def fixtures() -> list[DeviceInventory]:
     """The exact fixture network of SPEC §3.8."""
     livingroom = DeviceInventory(
@@ -122,8 +140,16 @@ def fixtures() -> list[DeviceInventory]:
             _hook_slot("shellyplus1-hall", 0, "switch.off", "relay", 0, "out_off", enabled=True,
                        name="Porch off after 30s",
                        urls=["http://192.168.1.12/rpc/Switch.Set?id=0&on=false&toggle_after=30"]),
+            # Events the device supports but has no webhook for: empty slots the
+            # editor can fill, the Gen2/3 counterpart of an empty Gen1 slot (#33).
+            *_synthetic("shellyplus1-hall", [("switch.on", "relay", 0, "out_on"),
+                                             ("input.toggle_on", "input", 0, "btn_on")]),
         ],
-        config={"config": {"switch:0": {"name": "Hall light"}}, "webhooks": {}, "supported": {}},
+        config={
+            "config": {"switch:0": {"name": "Hall light"}, "input:0": {}},
+            "webhooks": {},
+            "supported": {"types": {"switch.on": {}, "switch.off": {}, "input.toggle_on": {}}},
+        },
     )
 
     porch = DeviceInventory(

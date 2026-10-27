@@ -44,6 +44,76 @@ COMPONENT_KINDS = {
 }
 
 
+# A slot the device has no webhook for yet. Its id must not be mistaken for a
+# real hook id, so it carries its own marker (issue #33).
+SYNTHETIC_MARKER = ":newhook:"
+
+
+def synthetic_slot_id(device_id: str, event: str, cid: int) -> str:
+    return f"{device_id}{SYNTHETIC_MARKER}{event}:{cid}"
+
+
+def hook_id_of(slot_id: str) -> int | None:
+    """The device's hook id for this slot, or None when no hook exists yet."""
+    _, marker, suffix = slot_id.partition(":hook:")
+    return int(suffix) if marker and suffix.isdigit() else None
+
+
+def component_ids(config: dict[str, Any]) -> dict[str, list[int]]:
+    """`{"switch": [0, 1], "input": [0, 1], "cover": [0]}` from Shelly.GetConfig."""
+    components: dict[str, list[int]] = {}
+    for key in config or {}:
+        name, _, idx = key.partition(":")
+        if idx.isdigit():
+            components.setdefault(name.lower(), []).append(int(idx))
+    return {name: sorted(ids) for name, ids in components.items()}
+
+
+def synthetic_slots(
+    device_id: str,
+    config: dict[str, Any],
+    supported: dict[str, Any],
+    hooks: list[dict[str, Any]],
+) -> list[InventorySlot]:
+    """Empty slots for events this device supports but has no webhook for.
+
+    A Gen1 device reports every action slot it has, so the editor can fill an
+    empty one; a Gen2/3 device reports only the webhooks that exist. Without
+    these, the first action on a Plus or Gen3 device could never be added
+    (issue #33). They carry no URL, so they stay hidden until "Show inactive
+    actions", exactly like an empty Gen1 slot.
+    """
+    taken = {
+        (str(hook.get("event") or "").lower(), hook.get("cid", 0))
+        for hook in hooks or []
+        if isinstance(hook, dict)
+    }
+    components = component_ids(config)
+    slots: list[InventorySlot] = []
+    for event in sorted(supported_events(supported)):
+        key = event.lower()
+        if key not in GEN2_EVENTS:
+            # Only events we can name in the UI; an unmapped one would show up
+            # as a row nobody can read.
+            continue
+        for cid in components.get(key.split(".", 1)[0], []):
+            if (key, cid) in taken:
+                continue
+            source_kind, source_idx, normalized = event_for(event, cid)
+            slots.append(
+                InventorySlot(
+                    id=synthetic_slot_id(device_id, event, cid),
+                    source_kind=source_kind,
+                    source_idx=source_idx,
+                    event=normalized,
+                    native_key=event,
+                    enabled=False,
+                    urls=[],
+                )
+            )
+    return slots
+
+
 def event_for(event: str, cid: int) -> tuple[str, int, str]:
     """Return (source_kind, source_idx, normalized event) for a webhook event."""
     key = (event or "").strip().lower()
@@ -142,7 +212,10 @@ async def inventory(
         auth_required=bool(merged_info.get("auth_en", False)),
         raw_info=merged_info,
         channels=channels_from_config(config),
-        slots=slots_from_hooks(device_id, hook_list.get("hooks") or []),
+        slots=(
+            slots_from_hooks(device_id, hook_list.get("hooks") or [])
+            + synthetic_slots(device_id, config, supported, hook_list.get("hooks") or [])
+        ),
         config={"config": config, "webhooks": hook_list, "supported": supported},
     )
 

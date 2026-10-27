@@ -174,15 +174,14 @@ async def _write_to_device(
     slot: Any,
     wanted: SlotState,
     delete_hook: bool,
-) -> SlotState:
-    """Write, then re-read and return what the device actually holds now."""
+) -> tuple[SlotState, str | None]:
+    """Write, then re-read. Returns the device's state and any new slot id."""
     credentials = (await load_credentials(db)).get(device["id"])
     auth = auth_for(device["gen"], *credentials) if credentials else None
 
     async with await _client(settings) as client:
         if device["gen"] >= 2:
-            hook_id = slot["id"].rsplit(":", 1)[-1]
-            hook_id = int(hook_id) if hook_id.isdigit() else None
+            hook_id = gen2.hook_id_of(slot["id"])
 
             if delete_hook and hook_id is not None:
                 await gen2.delete_hook(client, device["ip"], hook_id, auth)
@@ -190,8 +189,9 @@ async def _write_to_device(
                     raise SlotWriteError(
                         502, "verify_failed", "the device still reports the webhook after deleting it"
                     )
-                return SlotState(False, [])
+                return SlotState(False, []), None
 
+            created: str | None = None
             if hook_id is None:
                 hook_id = await gen2.create_hook(
                     client,
@@ -203,6 +203,7 @@ async def _write_to_device(
                     slot["name"],
                     auth,
                 )
+                created = f"{device['id']}:hook:{hook_id}"
             else:
                 await gen2.write_hook(
                     client, device["ip"], hook_id, wanted.enabled, wanted.urls, auth
@@ -212,7 +213,7 @@ async def _write_to_device(
                 raise SlotWriteError(
                     502, "verify_failed", "the device no longer reports this webhook"
                 )
-            return SlotState(read[0], read[1])
+            return SlotState(read[0], read[1]), created
 
         await gen1.write_slot(
             client,
@@ -226,13 +227,17 @@ async def _write_to_device(
         enabled, urls = await gen1.read_slot(
             client, device["ip"], slot["native_key"], slot["source_idx"], auth
         )
-        return SlotState(enabled, urls)
+        return SlotState(enabled, urls), None
 
 
 async def apply_slot_update(
     db: Database, settings: Settings, slot_id: str, update: SlotUpdate
-) -> None:
-    """Write a slot to its device, verify it, then record it locally."""
+) -> str:
+    """Write a slot to its device, verify it, record it locally; return its id.
+
+    The id changes when a Gen2/3 webhook is created for a slot that had none:
+    the device names the hook, and the slot moves from `:newhook:` to `:hook:`.
+    """
     slot = await db.fetchone(
         """
         SELECT s.*, d.ip AS ip, d.gen AS gen, d.online AS online, d.name AS device_name
@@ -254,7 +259,14 @@ async def apply_slot_update(
 
     urls = await resolve_specs(db, list(update.urls), current.urls)
     wanted = SlotState(update.enabled, urls)
-    delete_hook = bool(slot["gen"] >= 2 and not urls)
+    is_new_hook = slot["gen"] >= 2 and gen2.hook_id_of(slot["id"]) is None
+    if is_new_hook and not urls:
+        raise SlotWriteError(
+            422,
+            "nothing_to_create",
+            "add a URL first — this device has no webhook for that event yet",
+        )
+    delete_hook = bool(slot["gen"] >= 2 and not urls and not is_new_hook)
     if delete_hook and not update.confirm_delete:
         raise SlotWriteError(
             409,
@@ -269,9 +281,10 @@ async def apply_slot_update(
     async with device_lock(slot["device_id"]):
         if settings.demo_mode:
             # §5.5: writes mutate the fixture database only.
-            await _store_locally(db, slot, wanted, delete_hook)
+            created = await _demo_hook_id(db, slot) if is_new_hook else None
+            await _store_locally(db, slot, wanted, delete_hook, created)
             await record_attempt(db, device["id"], action, payload, "simulated")
-            return
+            return created or slot["id"]
 
         if not slot["online"]:
             await record_attempt(db, device["id"], action, payload, "failed:device_offline")
@@ -282,7 +295,9 @@ async def apply_slot_update(
             )
 
         try:
-            written = await _write_to_device(db, settings, device, slot, wanted, delete_hook)
+            written, created = await _write_to_device(
+                db, settings, device, slot, wanted, delete_hook
+            )
         except SlotWriteError as exc:
             await record_attempt(db, device["id"], action, payload, f"failed:{exc.code}")
             raise
@@ -302,24 +317,42 @@ async def apply_slot_update(
                 },
             )
 
-        await _store_locally(db, slot, written, delete_hook)
+        await _store_locally(db, slot, written, delete_hook, created)
         await record_attempt(db, device["id"], action, payload, "verified")
+        return created or slot["id"]
 
 
-async def _store_locally(db: Database, slot: Any, state: SlotState, deleted: bool) -> None:
+async def _demo_hook_id(db: Database, slot: Any) -> str:
+    """A plausible hook id for demo mode, where no device hands one out."""
+    rows = await db.fetchall(
+        "SELECT id FROM action_slots WHERE device_id = ?", (slot["device_id"],)
+    )
+    used = [hook for hook in (gen2.hook_id_of(row["id"]) for row in rows) if hook is not None]
+    return f"{slot['device_id']}:hook:{(max(used) + 1) if used else 0}"
+
+
+async def _store_locally(
+    db: Database, slot: Any, state: SlotState, deleted: bool, new_slot_id: str | None = None
+) -> None:
     """Mirror the device's new state, then rebuild the edges it feeds."""
+    slot_id = slot["id"]
     if deleted:
-        await db.execute("DELETE FROM action_slots WHERE id = ?", (slot["id"],))
+        await db.execute("DELETE FROM action_slots WHERE id = ?", (slot_id,))
     else:
+        await db.execute("DELETE FROM action_urls WHERE slot_id = ?", (slot_id,))
+        if new_slot_id and new_slot_id != slot_id:
+            # The device named the webhook it just created; follow it.
+            await db.execute(
+                "UPDATE action_slots SET id = ? WHERE id = ?", (new_slot_id, slot_id)
+            )
+            slot_id = new_slot_id
         await db.execute(
-            "UPDATE action_slots SET enabled = ? WHERE id = ?",
-            (int(state.enabled), slot["id"]),
+            "UPDATE action_slots SET enabled = ? WHERE id = ?", (int(state.enabled), slot_id)
         )
-        await db.execute("DELETE FROM action_urls WHERE slot_id = ?", (slot["id"],))
         await db.executemany(
             "INSERT INTO action_urls (id, slot_id, position, raw_url) VALUES (?, ?, ?, ?)",
             [
-                (f"{slot['id']}#{position}", slot["id"], position, url)
+                (f"{slot_id}#{position}", slot_id, position, url)
                 for position, url in enumerate(state.urls)
             ],
         )
