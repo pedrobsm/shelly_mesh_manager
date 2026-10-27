@@ -6,11 +6,10 @@ Keep this file updated.
 
 **Phase 1 (read-only) is merged to `main`** (PR #16, PR #18). The 2026-10-27 real-LAN pass
 (PR #31, docs) filed #27–#30; all four are fixed on the current branch.
-**Phase 2 has started.** Done so far: the §3.5 table completed (dimmer rows, Gen1 roller
-go-to-position, `Light.Toggle`), `generator.py` with the §5.2 roundtrip suite, and the
-read-only half of §5.1 (`GET /api/slots/{id}`, `POST /api/url/build|parse`, `GET/PUT
-/api/settings`). Not written yet: the device write path (§5.3), the slot editor UI (§5.4) and
-demo-mode simulated writes (§5.5).
+**Phase 2 is in progress.** Done: the §3.5 table completed, `generator.py` + the §5.2
+roundtrip suite, all of §5.1 (`GET/PUT /api/slots/{id}`, `POST /api/url/build|parse|test`,
+`GET/PUT /api/settings`), the §5.3 write adapters with verify-after-write, per-device locking
+and the audit log, and §5.5 simulated writes. Not written yet: the slot editor UI (§5.4).
 
 ### Layout
 ```
@@ -47,6 +46,12 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 - View toggles (routing, labels, save-positions, the two visibility switches) live in
   `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
   Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
+- `slots.py` owns every write: it resolves `UrlSpec`s (refusing a raw URL aimed at an
+  inventoried device), takes the per-device lock, writes through the adapter, re-reads the
+  device and compares field by field, then mirrors the result locally and rebuilds the edges.
+  A write is never reported as a success on the strength of a 200 alone.
+- `SlotDetail.revision` is a hash of the stored slot; the editor sends it back as
+  `expect_revision` so a re-scan in the meantime is caught rather than overwritten.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Snapshot comparison ignores volatile fields (`adapters/base.py`): `VOLATILE_KEYS` everywhere,
   plus `VOLATILE_IN_CONTAINER` for generic names that are live readings only inside `meters[]`,

@@ -129,16 +129,32 @@ GET  /api/graph                       → Graph {nodes, edges}
 PUT  /api/layout                      → {ok}; body [{node_id, x, y}]
 ```
 
-Phase 2, in progress — the read-only half of the guided action builder (§5.1).
-The server generates every Shelly-target URL; the client never composes one:
+Phase 2, in progress — the guided action builder (§5.1). The server generates
+every Shelly-target URL; the client never composes one:
 
 ```
 GET  /api/slots/{slot_id}             → slot detail, each URL with its parse result
+PUT  /api/slots/{slot_id}             → writes the slot to its device, verifies, returns it
+                                        body {enabled, urls: UrlSpec[], expect_revision?,
+                                              confirm_delete?}
 POST /api/url/build                   → {url, command, params, summary}
                                         body {target_device_id, channel_id, command, params}
 POST /api/url/parse                   → the resolver's reading of one raw URL
+POST /api/url/test                    → {status_code, elapsed_ms, body_snippet}; fires the URL
 GET/PUT /api/settings                 → {ha_base_url}
 ```
+
+A `UrlSpec` is `{kind: 'built', target_device_id, channel_id, command, params}`,
+`{kind: 'ha_webhook', webhook_id}` or `{kind: 'raw_external', url}`. The last is
+refused when its host is an inventoried device: Shelly-target URLs are built by
+the server, and that rule is enforced at the API, not only in the form.
+
+**Writes are verified.** Every slot write is followed by a re-read of the device
+and a field-by-field comparison; a mismatch is an error carrying both states,
+never a quiet success. One write at a time per device, offline devices are
+refused, and every attempt — including the failures — lands in `audit_log`. In
+demo mode writes change the fixture database only and are recorded as
+`simulated`.
 
 Each channel in `GET /api/devices` carries the commands the builder can emit for
 it, with their parameters, so the form can only offer what the generator

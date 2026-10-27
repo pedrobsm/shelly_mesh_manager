@@ -145,3 +145,70 @@ async def inventory(
         slots=slots_from_hooks(device_id, hook_list.get("hooks") or []),
         config={"config": config, "webhooks": hook_list, "supported": supported},
     )
+
+
+def supported_events(supported: dict[str, Any]) -> set[str]:
+    """Event names `Webhook.ListSupported` reports for this device."""
+    types = (supported or {}).get("types")
+    return set(types) if isinstance(types, dict) else set()
+
+
+async def write_hook(
+    client: httpx.AsyncClient,
+    ip: str,
+    hook_id: int,
+    enabled: bool,
+    urls: list[str],
+    auth: httpx.Auth | None = None,
+) -> None:
+    """`Webhook.Update {id, enable, urls[]}` for a hook the device already has."""
+    await rpc(
+        client, ip, "Webhook.Update", {"id": hook_id, "enable": enabled, "urls": urls}, auth
+    )
+
+
+async def create_hook(
+    client: httpx.AsyncClient,
+    ip: str,
+    cid: int,
+    event: str,
+    enabled: bool,
+    urls: list[str],
+    name: str | None = None,
+    auth: httpx.Auth | None = None,
+) -> int:
+    """`Webhook.Create` for a slot with no hook yet; returns the new hook id.
+
+    The event is validated against `Webhook.ListSupported` first, because a
+    device rejects an unknown event with an error that says nothing useful.
+    """
+    supported = supported_events(await rpc(client, ip, "Webhook.ListSupported", auth=auth))
+    if supported and event not in supported:
+        raise DeviceError(f"this device does not support the event {event!r}")
+    params: dict[str, Any] = {"cid": cid, "event": event, "enable": enabled, "urls": urls}
+    if name:
+        params["name"] = name
+    result = await rpc(client, ip, "Webhook.Create", params, auth)
+    hook_id = result.get("id")
+    if not isinstance(hook_id, int):
+        raise DeviceError("Webhook.Create returned no hook id")
+    return hook_id
+
+
+async def delete_hook(
+    client: httpx.AsyncClient, ip: str, hook_id: int, auth: httpx.Auth | None = None
+) -> None:
+    """`Webhook.Delete {id}` — used when the last URL of a slot is removed."""
+    await rpc(client, ip, "Webhook.Delete", {"id": hook_id}, auth)
+
+
+async def read_hook(
+    client: httpx.AsyncClient, ip: str, hook_id: int, auth: httpx.Auth | None = None
+) -> tuple[bool, list[str]] | None:
+    """Re-read one hook for the verify-after-write; None once it is gone."""
+    hooks = (await rpc(client, ip, "Webhook.List", auth=auth)).get("hooks") or []
+    for hook in hooks:
+        if isinstance(hook, dict) and hook.get("id") == hook_id:
+            urls = [str(url) for url in (hook.get("urls") or []) if str(url).strip()]
+            return bool(hook.get("enable", False)), urls
+    return None

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,8 @@ class SlotUrl(ActionUrl):
 
 class SlotDetail(BaseModel):
     id: str
+    # Changes whenever the stored slot does; the editor sends it back on save.
+    revision: str = ""
     device_id: str
     device_name: str | None = None
     device_gen: int
@@ -159,6 +161,55 @@ class BuiltUrlResponse(BaseModel):
 
 class ParseRequest(BaseModel):
     raw_url: str
+
+
+class BuiltUrlSpec(BaseModel):
+    """The server generates the URL; the client never composes one (SPEC §4)."""
+
+    kind: Literal["built"]
+    target_device_id: str
+    channel_id: str
+    command: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class HaWebhookSpec(BaseModel):
+    kind: Literal["ha_webhook"]
+    webhook_id: str
+
+
+class RawExternalSpec(BaseModel):
+    """Only allowed for hosts that are not inventoried devices (SPEC §5.1)."""
+
+    kind: Literal["raw_external"]
+    url: str
+
+
+UrlSpec = Annotated[
+    BuiltUrlSpec | HaWebhookSpec | RawExternalSpec, Field(discriminator="kind")
+]
+
+
+class SlotUpdate(BaseModel):
+    enabled: bool
+    urls: list[UrlSpec] = Field(default_factory=list)
+    # Removing the last URL of a Gen2/3 slot deletes the webhook (SPEC §5.3).
+    confirm_delete: bool = False
+    # The slot state the editor loaded, so a re-scan in the meantime is caught
+    # instead of silently overwritten (SPEC §5.4).
+    expect_revision: str | None = None
+
+
+class UrlTestRequest(BaseModel):
+    url: str
+
+
+class UrlTestResult(BaseModel):
+    status_code: int | None = None
+    elapsed_ms: int
+    body_snippet: str = ""
+    error: str | None = None
+    simulated: bool = False
 
 
 class AppSettings(BaseModel):

@@ -32,9 +32,13 @@ from .models import (
     ScanStarted,
     ScanStatus,
     SlotDetail,
+    SlotUpdate,
     SlotUrl,
     UrlParse,
+    UrlTestRequest,
+    UrlTestResult,
 )
+from .slots import SlotWriteError, apply_slot_update, revision_of, test_url
 from .resolver import external_label, format_command_label, resolve
 
 router = APIRouter(prefix="/api")
@@ -324,6 +328,7 @@ async def get_slot(request: Request, slot_id: str) -> SlotDetail:
     ]
     return SlotDetail(
         id=row["id"],
+        revision=revision_of(bool(row["enabled"]), [url.raw_url for url in urls]),
         device_id=row["device_id"],
         device_name=row["device_name"],
         device_gen=row["device_gen"],
@@ -336,6 +341,25 @@ async def get_slot(request: Request, slot_id: str) -> SlotDetail:
         label=slot_label(row["source_kind"], row["source_idx"], row["event"]),
         urls=urls,
     )
+
+
+@router.put("/slots/{slot_id}", response_model=SlotDetail)
+async def put_slot(request: Request, slot_id: str, body: SlotUpdate) -> SlotDetail:
+    """Write a slot to its device, verify it, and return the state that stuck."""
+    try:
+        await apply_slot_update(_db(request), _settings(request), slot_id, body)
+    except SlotWriteError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"error": exc.code, "detail": exc.detail, **exc.extra},
+        ) from exc
+    return await get_slot(request, slot_id)
+
+
+@router.post("/url/test", response_model=UrlTestResult)
+async def post_url_test(request: Request, body: UrlTestRequest) -> UrlTestResult:
+    """Fire one URL from the server. On real hardware this really acts."""
+    return await test_url(_settings(request), body.url)
 
 
 @router.post("/url/parse", response_model=UrlParse)

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from .base import (
+    DeviceError,
     DeviceInventory,
     InventoryChannel,
     InventorySlot,
@@ -136,3 +137,48 @@ async def inventory(
         slots=slots_from_actions(device_id, actions),
         config={"settings": settings, "actions": actions},
     )
+
+
+async def write_slot(
+    client: httpx.AsyncClient,
+    ip: str,
+    native_key: str,
+    idx: int,
+    enabled: bool,
+    urls: list[str],
+    auth: httpx.Auth | None = None,
+) -> None:
+    """Write one action slot (SPEC §5.3).
+
+    Gen1 takes writes as GET query params:
+    `/settings/actions?index={i}&name={key}&enabled=true|false&urls[]=…`
+    with one `urls[]` per URL, and a single empty one to clear the slot.
+    """
+    params: list[tuple[str, str]] = [
+        ("index", str(idx)),
+        ("name", native_key),
+        ("enabled", "true" if enabled else "false"),
+    ]
+    params.extend(("urls[]", url) for url in urls) if urls else params.append(("urls[]", ""))
+    response = await client.get(f"http://{ip}/settings/actions", params=params, auth=auth)
+    response.raise_for_status()
+
+
+async def read_slot(
+    client: httpx.AsyncClient,
+    ip: str,
+    native_key: str,
+    idx: int,
+    auth: httpx.Auth | None = None,
+) -> tuple[bool, list[str]]:
+    """Re-read one slot for the mandatory verify-after-write."""
+    response = await client.get(f"http://{ip}/settings/actions", auth=auth)
+    response.raise_for_status()
+    actions = (response.json() or {}).get("actions") or {}
+    for position, entry in enumerate(actions.get(native_key) or []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("index", position) == idx:
+            urls = [str(url) for url in (entry.get("urls") or []) if str(url).strip()]
+            return bool(entry.get("enabled", False)), urls
+    raise DeviceError(f"the device no longer reports an action slot {native_key}[{idx}]")
