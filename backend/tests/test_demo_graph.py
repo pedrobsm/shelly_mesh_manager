@@ -72,6 +72,7 @@ def test_livingroom_button_to_hall_relay(graph):
 
 def test_livingroom_out_off_to_home_assistant(graph):
     edge = edge_from(graph, "shelly25-livingroom:act:out_off_url:0")
+    assert edge.command == "webhook"  # §1.3: external targets say what they call
     ha = node(graph, "ext:192.168.1.5")
     assert ha.type == "external"
     assert ha.label == "Home Assistant"
@@ -168,4 +169,8 @@ async def test_one_ghost_node_per_host_whatever_the_query(tmp_path):
     assert [n.id for n in result.nodes if n.type == "external"] == []
     assert {e.target for e in result.edges} == {"unknown:192.168.33.25"}
     assert {e.status for e in result.edges} == {"dangling"}
-    assert sorted(e.command for e in result.edges) == ["other", "other", "toggle"]
+    assert sorted(e.command for e in result.edges) == [
+        "dim down · 25%",
+        "dim up · 25%",
+        "toggle",
+    ]

@@ -146,7 +146,7 @@ def test_shelly_shaped_urls_to_an_unknown_host_are_one_ghost(url):
 
 
 def test_unrecognised_query_to_an_unknown_host_keeps_command_other():
-    result = resolve("http://192.168.33.25/light/0?dim=up&step=25", INVENTORY)
+    result = resolve("http://192.168.33.25/light/0?effect=3", INVENTORY)
     assert result.command == "other"
     assert result.params == {}
     # The channel is still known from the path, which the ghost node's port uses.
@@ -160,11 +160,52 @@ def test_non_shelly_path_on_an_unknown_host_stays_external():
 
 
 def test_unrecognised_query_on_an_inventoried_device_is_still_unparsed():
-    # No §3.5 row covers ?dim=, so on a known device the edge keeps its '?' label.
-    result = resolve("http://192.168.1.11/light/1?dim=up&step=25", INVENTORY)
+    # A query no §3.5 row covers still keeps its '?' label on a known device.
+    result = resolve("http://192.168.1.11/light/1?effect=3", INVENTORY)
     assert result.target_type == "device"
     assert result.status == "unparsed"
     assert result.target_channel_id is None
+
+
+# --- dimmer rows added to the §3.5 table --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path,command,params",
+    [
+        ("/light/0?dim=up&step=25", "dim_up", {"step": 25}),
+        ("/light/0?dim=down&step=10", "dim_down", {"step": 10}),
+        ("/light/0?dim=stop", "dim_stop", {}),
+        ("/white/1?dim=up&step=5", "dim_up", {"step": 5}),
+        ("/light/0?brightness=40", "set", {"brightness": 40}),
+        ("/white/1?brightness=100&timer=5", "set", {"brightness": 100, "timer": 5}),
+        ("/color/0?gain=70", "set", {"gain": 70}),
+        ("/rpc/Light.DimUp?id=0&fade_rate=3", "dim_up", {"fade_rate": 3}),
+        ("/rpc/Light.DimDown?id=0", "dim_down", {}),
+        ("/rpc/Light.DimStop?id=0", "dim_stop", {}),
+    ],
+)
+def test_dimmer_rows(path, command, params):
+    _, url_path, query = split_url("http://10.0.0.1" + path)
+    match = match_command(url_path, query)
+    assert match is not None, path
+    assert match.command == command
+    assert match.params == params
+
+
+def test_a_dimmer_url_to_an_inventoried_light_resolves(caplog):
+    result = resolve("http://192.168.1.11/light/1?dim=up&step=25", INVENTORY)
+    assert result.target_type == "device"
+    assert result.status == "ok"
+    assert result.target_channel_id == "hall:light:1"
+    assert format_command_label(result.command, result.params, result.status) == "dim up · 25%"
+
+
+def test_turn_still_wins_over_a_level():
+    _, path, query = split_url("http://10.0.0.1/light/0?turn=on&brightness=40")
+    match = match_command(path, query)
+    assert match is not None and match.command == "on"
+    assert match.params == {"brightness": 40}
 
 
 @pytest.mark.parametrize(

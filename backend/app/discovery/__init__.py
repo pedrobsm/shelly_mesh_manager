@@ -231,21 +231,24 @@ async def inventory_device(
         inv = await adapter.inventory(client, probe_result, auth)
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 401:
+            # Mark the device as needing credentials whether or not some are
+            # stored: a password changed on the device rejects what we have, and
+            # the UI only offers the credentials form while auth_required is set.
+            await upsert_device(
+                db,
+                device_id=device_id,
+                ip=probe_result.ip,
+                gen=probe_result.gen,
+                model=model,
+                name=None,
+                fw_version=str((probe_result.info or {}).get("fw") or "") or None,
+                profile=None,
+                auth_required=True,
+                raw_info=probe_result.info,
+            )
             if creds is None:
-                await upsert_device(
-                    db,
-                    device_id=device_id,
-                    ip=probe_result.ip,
-                    gen=probe_result.gen,
-                    model=model,
-                    name=None,
-                    fw_version=str((probe_result.info or {}).get("fw") or "") or None,
-                    profile=None,
-                    auth_required=True,
-                    raw_info=probe_result.info,
-                )
                 return device_id, f"{probe_result.ip}: authentication required"
-            return device_id, f"{probe_result.ip}: credentials rejected"
+            return device_id, f"{probe_result.ip}: stored credentials rejected"
         return device_id, f"{probe_result.ip}: HTTP {exc.response.status_code if exc.response else '?'}"
     except Exception as exc:  # a misbehaving device never aborts the scan
         return device_id, f"{probe_result.ip}: {exc}"
