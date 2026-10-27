@@ -196,3 +196,61 @@ ghost node. Still open, as a spec question: §3.5 has no row for `?dim=` /
 
 Snapshots written before the fix remain (up to 10 per device, mostly noise);
 they age out as real changes arrive.
+
+---
+
+## 2026-10-27 — validation pass on `main` @ 83c1a5b
+
+Read-only pass against the live 15-device LAN (now 16 records: a Gen3 relay appeared, and a stale record from a protected device; see below). Container built from `main` @ `83c1a5b` with `SCAN_INTERVAL_MIN=0` and `SCAN_SUBNET=192.168.33.0/24`. Nothing in this pass writes to a device.
+
+### 1. Snapshot stability (#12 follow-up)
+Three scans of an untouched network, 60 s apart, counting snapshot rows written during the run.
+
+- **Result: 0 new rows on every device** (all 11 online Gen1, the Gen2 Plus2PMs, and the Gen3 relay). No `config changed on …` log lines.
+- No new volatile field needed adding to `VOLATILE_IN_CONTAINER`.
+- Note on the measurement: the ring holds 10 rows per device, so the total stays flat once full. The count has to be of rows written during the run, not of the total.
+
+### 2. §3.5 table: dangling / unparsed, and dimmer URLs
+- Toolbar: 17 devices (16 real + 1 stale record, see #27), **3 dangling, 0 unparsed**. The 3 dangling edges all go to `192.168.33.25`, which is not inventoried.
+- The `?dim=` URLs that were `unparsed` in August now resolve: `dim down · 25%` and `dim up · 25%` (dangling, because `.25` is not a device).
+- Read-only parse checks against the RGBW2 (`.35`), all as expected: `set · b=80`, `dim up · 25%`, `dim down · 25%`, `dim stop`, `on · b=80`.
+- **Each device's own action URLs** (read live from `/settings/actions` or `Webhook.List`): 28 URLs, all 28 in the graph, **0 missing, 0 unrecognised**. No raw URL was found that the resolver doesn't recognise.
+- The earlier dead action on `192.168.33.32` now points at `/white/3` and resolves `ok`.
+
+### 3. External edge labels (#10)
+- The two HA webhook edges read `webhook`. ✅
+- The 15 edges from `192.168.33.11` to `http://192.168.33.180:11505/webhook?data=…` read **`/webhook`**. This is what SPEC §1.3 literally specifies for non-HA externals, but the 15 are indistinguishable because the event is only in the query. Filed as **#30**, a decision on the label vocabulary.
+
+### 4. Credentials (#4 follow-up) — NOT RUN
+Setting, changing and removing a device's password is a write to the device. It needs a chosen test device and an explicit go-ahead. Not done in this pass.
+
+What the pass did find on the way: a device that was protected earlier left a second record behind. See the next section and **#27**.
+
+### 5. Single-device re-scan (#17)
+- One click on a node → **one** `POST /api/devices/shellyswitch25-BA8DE4/rescan`, HTTP 200, no console errors (headless Chromium).
+- Rescan: **0.14–0.17 s**. Full scan of the /24: **56 s**.
+- Rescan while a full scan runs: **HTTP 409** `scan_running`.
+- Unreachable device (host firewall drop, removed afterwards): **HTTP 200** `{"ok":false,"online":false,"error":"device unreachable"}` in 3.0 s. The node goes offline; it is not an error.
+
+### 6. Generator against the real inventory (throwaway script, never contacts a device)
+For every channel of every online device, build → parse → compare channel, command and params, for each command in the channel's map, with no params and with a sample value for every param name.
+
+- **202 pass, 10 refused.** The 10 refusals are all the bare `set` variant (no value). The builder refuses by design with a 422 naming the required param (`pos`, or `brightness`/`gain`). Every valued `set` passes.
+- Covered shapes: SHSW-25 relay and roller, SHSW-44 (4 Pro) relays, SHRGBW2 white channels, SHIX3 (no channels, so nothing to build), SHEM, Gen2 Plus2PM switch and cover, Gen3 relay (S3SW-001P16EU). **Not covered:** a Gen3 RGBW or cover device; none is on the LAN (see §3.5 gap in CLAUDE.md).
+
+### New issues from this pass
+| Issue | What |
+|---|---|
+| #27 | A password-protected Gen1 device gets a second record; the real one is moved to `unassigned:` and the stale record is never removed. Two code paths build the id differently. |
+| #28 | Gen1 device id comes from the hostname, not the MAC (SPEC §2 says MAC-derived). A hostname change would orphan the device's history. |
+| #29 | `scan_runs` rows stay unfinished (`ended_at` NULL) when the container restarts mid-scan. Two rows from 2026-10-23. |
+| #30 | External edges to one non-HA webhook all read `/webhook`. Label-vocabulary decision. |
+
+### Comments posted
+- #2: Gen3 relay discovered; range scan 16/16 in 56 s.
+- #3: coverage 28/28, dimmer URLs resolve, generator round trip 202/212 (10 are bare `set`, refused by design).
+- #5: offline via the single-device rescan path verified; physical unplug still open.
+- #6: timing figures recorded; the 40-device test is still open.
+
+### Container
+Running `main` @ `83c1a5b`. The stale record for the protected device (#27) is still in the DB; it has not been removed. Nothing was deleted.
