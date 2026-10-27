@@ -4,7 +4,8 @@ Keep this file updated.
 
 ## Project state
 
-**Phase 1 (read-only) is merged to `main`** (PR #16); its follow-up fixes are in PR #18.
+**Phase 1 (read-only) is merged to `main`** (PR #16, PR #18). The 2026-10-27 real-LAN pass
+(PR #31, docs) filed #27–#30; all four are fixed on the current branch.
 **Phase 2 has started.** Done so far: the §3.5 table completed (dimmer rows, Gen1 roller
 go-to-position, `Light.Toggle`), `generator.py` with the §5.2 roundtrip suite, and the
 read-only half of §5.1 (`GET /api/slots/{id}`, `POST /api/url/build|parse`, `GET/PUT
@@ -61,7 +62,19 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 - `POST /api/devices/{id}/rescan` (#17) re-reads one device through `rescan_device()` and
   rebuilds the edges; it is refused with 409 while a full scan runs. It is one endpoint beyond
   what SPEC §3.6 calls the complete Phase 1 surface — see the handover below.
-- Device ids are MAC-derived and stable; IPs are not. Upserts key on the id.
+- Device ids are MAC-derived and stable; IPs are not. Upserts key on the id. `gen1_device_id()`
+  in `adapters/base.py` is the only place a Gen1 id is formed — the full-inventory path and the
+  partial path used for a device that refuses inventory must agree, or the same device is stored
+  twice (#27). The hostname is a fallback only: changing it in the device's UI must not orphan
+  everything keyed on it (#28).
+- `migrate_device_ids()` runs at startup (outside demo mode, whose fixtures are hand-named) and
+  re-keys any record whose stored `raw_info` says it should be called something else. Channels,
+  slots and URLs are dropped and rebuilt by the next scan; credentials, config snapshots and the
+  node's position move across, because they cannot be re-read from the device.
+- A scan that finds another record on the same IP absorbs it when the MAC matches, and parks it
+  at `unassigned:` only when it is genuinely a different device.
+- `scan_runs` rows left open by a restart are closed at startup (#29); `ScanManager` also writes
+  an end on cancellation, which covers the orderly shutdown.
 - `DATA_DIR` (dev-only, default `/data`) is the one env var not in the §3.2 table.
 
 ### Commands

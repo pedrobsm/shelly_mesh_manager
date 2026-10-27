@@ -6,6 +6,7 @@ import pytest
 
 from app.resolver import (
     DeviceRef,
+    external_label,
     format_command_label,
     match_command,
     match_shelly_path,
@@ -240,3 +241,39 @@ def test_match_shelly_path_rejects_other_paths(path):
 )
 def test_edge_labels(command, params, status, expected):
     assert format_command_label(command, params, status) == expected
+
+
+# --- §1.3 external labels (issues #10, #30) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "url,webhook_id,expected",
+    [
+        ("http://192.168.1.5:8123/api/webhook/lights_all_off", "lights_all_off", "webhook"),
+        ("http://192.168.1.180:11505/webhook?data=btn_on_url?0?192.168.1.11", None,
+         "/webhook · btn_on_url"),
+        ("http://192.168.1.180:11505/webhook?data=roller_stop_url?0?192.168.1.11", None,
+         "/webhook · roller_stop_url"),
+        ("http://example.com/hook", None, "/hook"),
+        ("http://example.com/hook?id=42", None, "/hook · 42"),
+        ("http://example.com/hook?empty=&id=42", None, "/hook · 42"),
+        ("http://example.com/", None, "/"),
+    ],
+)
+def test_external_labels(url, webhook_id, expected):
+    assert external_label(url, webhook_id) == expected
+
+
+def test_external_labels_tell_same_path_urls_apart():
+    """#30: fifteen actions posting to one path must not read identically."""
+    urls = [
+        f"http://192.168.1.180:11505/webhook?data={event}?0?192.168.1.11"
+        for event in ("btn_on_url", "btn_off_url", "roller_open_url", "roller_stop_url")
+    ]
+    labels = [external_label(url) for url in urls]
+    assert len(set(labels)) == len(labels)
+
+
+def test_a_long_token_is_truncated():
+    label = external_label("http://example.com/hook?data=" + "x" * 50)
+    assert label == "/hook · " + "x" * 16

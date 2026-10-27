@@ -23,6 +23,7 @@ Self-hosted web app (Docker) that discovers Shelly devices on the LAN, visualize
 - One edge per action URL: from the source device's action port to the target's input port (or external port).
 - **Every edge is labeled with the normalized command**: `on`, `off`, `toggle`, `open`, `close`, `stop`, `set`, `dim up`, `dim down`, `dim stop`, or `other` — with suffixes when parameters exist, e.g. `on · 30s` (timer), `open · 50%` (duration/position), `set · b=80` (brightness), `dim up · 25%` (step).
 - Edges to an **external** target carry no Shelly command, so they are labeled by what they call instead: `webhook` for an HA webhook, otherwise the URL path (truncated). Without this a device that fans a dozen webhooks at one host draws a dozen identical `other` edges.
+  - A path alone is often not enough — fifteen actions can post to the same `/webhook` and differ only in the query. So when the URL has a query, the label appends its **first value**, cut at the first `?`, `&`, `/`, `,` or `;` and truncated: `/webhook?data=btn_on_url?0?192.168.1.11` → `/webhook · btn_on_url`. One token, taken generically, is enough to tell such edges apart; the raw URL stays in the edge popover.
 - Edge status → styling:
   - `ok` — solid line.
   - `disabled` — dashed, dimmed (only rendered when "Show inactive" is on).
