@@ -16,6 +16,7 @@ from ..adapters import gen1, gen2
 from ..adapters.base import (
     DeviceInventory,
     ProbeResult,
+    gen1_device_id,
     canonical_json,
     changed_paths,
     strip_volatile,
@@ -45,6 +46,161 @@ def auth_for(gen: int, username: str, password: str) -> httpx.Auth:
 async def load_credentials(db: Database) -> dict[str, tuple[str, str]]:
     rows = await db.fetchall("SELECT device_id, username, password FROM credentials")
     return {row["device_id"]: (row["username"], row["password"]) for row in rows}
+
+
+# --- device identity upkeep (issues #27, #28) ---------------------------------
+
+
+def canonical_device_id(row: Any) -> str | None:
+    """The id a stored device *should* have, computed from its own raw_info.
+
+    Gen2/3 ids come straight from the device and are already MAC-derived; only
+    Gen1 ever disagreed, because the id used to be taken from the hostname.
+    """
+    try:
+        info = json.loads(row["raw_info"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    if (row["gen"] or 1) >= 2:
+        return str(info.get("id") or "") or None
+    if not info.get("mac"):
+        return None
+    return gen1_device_id(info.get("type") or row["model"], info.get("mac"))
+
+
+def _merged_values(keeper: Any, stale: Any) -> tuple:
+    """Field values for the surviving row: the newer reading wins, nulls fall back."""
+    newer, older = (keeper, stale) if keeper["last_seen"] >= stale["last_seen"] else (stale, keeper)
+
+    def pick(field: str) -> Any:
+        return newer[field] if newer[field] is not None else older[field]
+
+    ip = newer["ip"]
+    if ip.startswith(("migrating:", "unassigned:")):
+        ip = older["ip"]
+    return (
+        ip,
+        pick("gen"),
+        pick("model"),
+        pick("name"),
+        pick("fw_version"),
+        pick("profile"),
+        newer["auth_required"],
+        newer["online"],
+        min(keeper["first_seen"], stale["first_seen"]),
+        max(keeper["last_seen"], stale["last_seen"]),
+        pick("raw_info"),
+    )
+
+
+async def reassign_device_id(db: Database, stale_id: str, keeper_id: str) -> bool:
+    """Move a device record onto its canonical id, keeping what cannot be re-read.
+
+    Channels, slots and URLs are rebuilt by the next scan, so they ride along by
+    being dropped. Credentials, config snapshots and the node's position cannot
+    be re-derived, so they move explicitly — losing them is what made the old
+    'park the row at unassigned:' behaviour a data-loss bug (#27).
+    """
+    if stale_id == keeper_id:
+        return False
+    stale = await db.fetchone("SELECT * FROM devices WHERE id = ?", (stale_id,))
+    if stale is None:
+        return False
+
+    # Free the unique IP before the keeper can claim it.
+    await db.execute("UPDATE devices SET ip = 'migrating:' || id WHERE id = ?", (stale_id,))
+    keeper = await db.fetchone("SELECT * FROM devices WHERE id = ?", (keeper_id,))
+
+    if keeper is None:
+        await db.execute(
+            """
+            INSERT INTO devices (id, ip, gen, model, name, fw_version, profile, auth_required,
+                                 online, first_seen, last_seen, raw_info)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                keeper_id,
+                stale["ip"],
+                stale["gen"],
+                stale["model"],
+                stale["name"],
+                stale["fw_version"],
+                stale["profile"],
+                stale["auth_required"],
+                stale["online"],
+                stale["first_seen"],
+                stale["last_seen"],
+                stale["raw_info"],
+            ),
+        )
+    else:
+        await db.execute(
+            """
+            UPDATE devices SET ip = ?, gen = ?, model = ?, name = ?, fw_version = ?, profile = ?,
+                   auth_required = ?, online = ?, first_seen = ?, last_seen = ?, raw_info = ?
+            WHERE id = ?
+            """,
+            (*_merged_values(keeper, stale), keeper_id),
+        )
+
+    await db.execute(
+        "UPDATE config_snapshots SET device_id = ? WHERE device_id = ?", (keeper_id, stale_id)
+    )
+    kept_credentials = await db.fetchone(
+        "SELECT 1 AS present FROM credentials WHERE device_id = ?", (keeper_id,)
+    )
+    if kept_credentials is None:
+        await db.execute(
+            "UPDATE credentials SET device_id = ? WHERE device_id = ?", (keeper_id, stale_id)
+        )
+    kept_layout = await db.fetchone(
+        "SELECT 1 AS present FROM node_layout WHERE node_id = ?", (keeper_id,)
+    )
+    if kept_layout is None:
+        await db.execute(
+            "UPDATE node_layout SET node_id = ? WHERE node_id = ?", (keeper_id, stale_id)
+        )
+    else:
+        await db.execute("DELETE FROM node_layout WHERE node_id = ?", (stale_id,))
+
+    # Cascades the stale record's channels, slots and URLs; the scan rebuilds them.
+    await db.execute("DELETE FROM devices WHERE id = ?", (stale_id,))
+    log.info("merged device record %s into %s", stale_id, keeper_id)
+    return True
+
+
+async def migrate_device_ids(db: Database) -> int:
+    """Re-key any device stored under a non-canonical id (runs at startup).
+
+    Without this, making Gen1 ids MAC-derived (#28) would make the next scan
+    insert a second record for every Gen1 device on the network.
+    """
+    moved = 0
+    for row in await db.fetchall("SELECT * FROM devices"):
+        canonical = canonical_device_id(row)
+        if canonical and canonical != row["id"]:
+            moved += int(await reassign_device_id(db, row["id"], canonical))
+    if moved:
+        log.info("re-keyed %d device record(s) onto their MAC-derived id", moved)
+    return moved
+
+
+async def close_unfinished_scans(db: Database) -> int:
+    """Finish scan_runs rows left open by a restart mid-scan (issue #29)."""
+    rows = await db.fetchall("SELECT id FROM scan_runs WHERE ended_at IS NULL")
+    if not rows:
+        return 0
+    await db.executemany(
+        "UPDATE scan_runs SET ended_at = ?, errors = ? WHERE id = ?",
+        [
+            (now_iso(), json.dumps(["interrupted: the app stopped while this scan was running"]), row["id"])
+            for row in rows
+        ],
+    )
+    log.info("closed %d scan run(s) interrupted by a restart", len(rows))
+    return len(rows)
 
 
 async def store_snapshot(db: Database, device_id: str, config: dict[str, Any]) -> bool:
@@ -112,12 +268,20 @@ async def upsert_device(
 ) -> None:
     """Upsert by device id — the IP may change, the id may not (SPEC §3.4.6)."""
     timestamp = now_iso()
-    # A recycled IP must not collide with the UNIQUE(ip) constraint: the previous holder
-    # of this address keeps its row (never auto-delete) but loses the address.
-    await db.execute(
-        "UPDATE devices SET ip = 'unassigned:' || id, online = 0 WHERE ip = ? AND id <> ?",
-        (ip, device_id),
+    # Another record holding this IP is either the same device under a stale id —
+    # merge into this one (#27) — or a different device that took the address,
+    # which keeps its row (never auto-delete) but loses the address.
+    holder = await db.fetchone(
+        "SELECT * FROM devices WHERE ip = ? AND id <> ?", (ip, device_id)
     )
+    if holder is not None:
+        if canonical_device_id(holder) == device_id:
+            await reassign_device_id(db, holder["id"], device_id)
+        else:
+            await db.execute(
+                "UPDATE devices SET ip = 'unassigned:' || id, online = 0 WHERE id = ?",
+                (holder["id"],),
+            )
     await db.execute(
         """
         INSERT INTO devices (id, ip, gen, model, name, fw_version, profile, auth_required,
@@ -209,9 +373,10 @@ def partial_identity(probe_result: ProbeResult) -> tuple[str, str]:
     if probe_result.gen >= 2:
         device_id = str(info.get("id") or info.get("mac") or probe_result.ip)
         return device_id, str(info.get("model") or "unknown")
-    mac = str(info.get("mac") or "").upper()
     model = str(info.get("type") or "unknown")
-    device_id = f"{model.lower()}-{mac}" if mac else f"shelly-{probe_result.ip}"
+    # The same function the full inventory uses, so a protected device is not
+    # recorded under a second id (issue #27).
+    device_id = gen1_device_id(model, info.get("mac"), fallback=f"shelly-{probe_result.ip}")
     return device_id, model
 
 
@@ -386,7 +551,16 @@ class ScanManager:
         return scan_id
 
     async def _run(self, scan_id: str) -> None:
-        await run_scan(self.db, self.settings, scan_id=scan_id)
+        try:
+            await run_scan(self.db, self.settings, scan_id=scan_id)
+        except asyncio.CancelledError:
+            # Best effort: the startup reconciliation closes the row if this
+            # write does not land either (#29).
+            await self.db.execute(
+                "UPDATE scan_runs SET ended_at = ?, errors = ? WHERE id = ? AND ended_at IS NULL",
+                (now_iso(), json.dumps(["interrupted: the scan was cancelled"]), scan_id),
+            )
+            raise
 
     async def cancel(self) -> None:
         """Stop the in-flight scan, if any (shutdown path)."""

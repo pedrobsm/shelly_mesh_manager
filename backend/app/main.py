@@ -18,7 +18,7 @@ from .api import router
 from .config import settings
 from .db import init_db
 from .demo_fixtures import seed_demo
-from .discovery import ScanManager
+from .discovery import ScanManager, close_unfinished_scans, migrate_device_ids
 from .graph import rebuild_edges
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -54,6 +54,14 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.settings = settings
     app.state.scans = ScanManager(db, settings)
+
+    # Housekeeping before anything reads or writes the inventory: records stored
+    # under a stale id are re-keyed (#27, #28) and scans a restart cut short are
+    # closed (#29). The fixtures are named by hand and answer to no hardware, so
+    # re-keying them would only fight with the seeding that follows.
+    if not settings.demo_mode:
+        await migrate_device_ids(db)
+    await close_unfinished_scans(db)
 
     if settings.demo_mode:
         log.info("DEMO_MODE=true — seeding fixture network, no network I/O")

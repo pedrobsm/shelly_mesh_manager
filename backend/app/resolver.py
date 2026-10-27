@@ -410,16 +410,32 @@ _COMMAND_LABELS = {
 
 # An external target has no Shelly command, so it is labelled by what it calls.
 EXTERNAL_LABEL_MAX = 22
+EXTERNAL_TOKEN_MAX = 16
+# Where a query value stops being distinguishing (SPEC §1.3).
+_TOKEN_DELIMITERS = "?&/,;"
 
 
-def external_label(path: str | None, webhook_id: str | None = None) -> str:
-    """§1.3 label for an external target: 'webhook', else the path."""
+def _first_query_token(query: Mapping[str, str]) -> str | None:
+    """The first query value, cut where it stops telling two URLs apart."""
+    for value in query.values():
+        text = (value or "").strip()
+        for delimiter in _TOKEN_DELIMITERS:
+            text = text.split(delimiter, 1)[0]
+        if text:
+            return text[:EXTERNAL_TOKEN_MAX]
+    return None
+
+
+def external_label(raw_url: str | None, webhook_id: str | None = None) -> str:
+    """§1.3 label for an external target: 'webhook', else path and first token."""
     if webhook_id:
         return "webhook"
-    text = (path or "/").split("?", 1)[0]
+    _, path, query = split_url(raw_url or "/")
+    text = _norm_path(path)
     if len(text) > EXTERNAL_LABEL_MAX:
         text = f"{text[: EXTERNAL_LABEL_MAX - 1]}…"
-    return text
+    token = _first_query_token(query)
+    return f"{text} · {token}" if token else text
 
 
 def format_command_label(command: str, params: Mapping[str, Any] | None, status: str) -> str:

@@ -240,7 +240,7 @@ async def build_graph(db: Database) -> Graph:
 
         if target_type == "external" and row["status"] != "unparsed":
             # No Shelly command to show, so say what the URL calls instead (#10).
-            label = external_label(row["external_path"], _webhook_id_of(row["external_path"] or ""))
+            label = external_label(row["raw_url"], _webhook_id_of(row["external_path"] or ""))
         else:
             label = format_command_label(row["command"], params, row["status"])
 

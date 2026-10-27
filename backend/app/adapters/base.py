@@ -138,6 +138,21 @@ def changed_paths(before: Any, after: Any, prefix: str = "", limit: int = 8) -> 
     return [] if before == after else [prefix or "(root)"]
 
 
+def gen1_device_id(model: str | None, mac: str | None, fallback: str = "") -> str:
+    """The stable id of a Gen1 device: MAC-derived, never the hostname (SPEC §2).
+
+    Both the full-inventory path and the partial path used for a device that
+    refuses inventory must name a device identically, or the same device is
+    recorded twice (issue #27). A hostname is not stable either — changing it in
+    the device's web UI would orphan everything keyed on it (issue #28).
+    """
+    mac = str(mac or "").strip().upper()
+    name = str(model or "shelly").strip().lower() or "shelly"
+    if mac:
+        return f"{name}-{mac}"
+    return fallback or name
+
+
 class DeviceError(Exception):
     """A device could not be inventoried; the scan carries on regardless."""
 

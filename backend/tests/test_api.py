@@ -306,3 +306,23 @@ def test_settings_round_trip(client):
     assert saved == {"ha_base_url": "http://192.168.1.5:8123"}  # trailing slash trimmed
     assert client.get("/api/settings").json() == saved
     assert client.put("/api/settings", json={"ha_base_url": ""}).json() == {"ha_base_url": None}
+
+
+def test_demo_ids_and_layout_survive_a_restart(app_module, tmp_path):
+    """The id migration (#27/#28) must not churn the hand-named fixtures."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(app_module.app) as client:
+        before = sorted(device["id"] for device in client.get("/api/devices").json())
+        client.put(
+            "/api/layout", json=[{"node_id": "shelly25-livingroom", "x": 11.0, "y": 22.0}]
+        )
+
+    with TestClient(app_module.app) as client:  # restart against the same /data
+        assert sorted(device["id"] for device in client.get("/api/devices").json()) == before
+        node = next(
+            n for n in client.get("/api/graph").json()["nodes"] if n["id"] == "shelly25-livingroom"
+        )
+        assert node["position"] == {"x": 11.0, "y": 22.0}
+        snapshots = client.get("/api/devices/shelly25-livingroom").json()["snapshot_count"]
+        assert snapshots == 1

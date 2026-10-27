@@ -6,7 +6,13 @@ from typing import Any
 
 import httpx
 
-from .base import DeviceInventory, InventoryChannel, InventorySlot, ProbeResult
+from .base import (
+    DeviceInventory,
+    InventoryChannel,
+    InventorySlot,
+    ProbeResult,
+    gen1_device_id,
+)
 
 # Static Gen1 action-key -> (source_kind, normalized event) table.
 GEN1_ACTION_EVENTS: dict[str, tuple[str, str]] = {
@@ -39,12 +45,13 @@ def event_for_key(key: str) -> tuple[str, str]:
 
 
 def device_id_for(info: dict[str, Any], settings: dict[str, Any]) -> str:
-    hostname = (settings.get("device") or {}).get("hostname")
-    if hostname:
-        return str(hostname)
-    mac = str(info.get("mac") or (settings.get("device") or {}).get("mac") or "").upper()
-    model = str(info.get("type") or (settings.get("device") or {}).get("type") or "shelly")
-    return f"{model.lower()}-{mac}" if mac else model.lower()
+    """MAC-derived, with the hostname only as a last resort (SPEC §2, issue #28)."""
+    device = settings.get("device") or {}
+    return gen1_device_id(
+        info.get("type") or device.get("type"),
+        info.get("mac") or device.get("mac"),
+        fallback=str(device.get("hostname") or ""),
+    )
 
 
 def channels_from_settings(settings: dict[str, Any]) -> list[InventoryChannel]:

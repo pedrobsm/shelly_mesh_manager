@@ -267,7 +267,7 @@ async def _parse_url(db: Database, raw_url: str, *, slot_enabled: bool = True) -
             channel_label_text = row["name"] or channel_label(row["kind"], row["idx"])
 
     if result.target_type == "external" and result.status != "unparsed":
-        label = external_label(result.external_path, result.webhook_id)
+        label = external_label(raw_url, result.webhook_id)
     else:
         label = format_command_label(result.command, result.params, result.status)
 
