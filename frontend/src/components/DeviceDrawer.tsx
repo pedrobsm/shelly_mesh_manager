@@ -15,10 +15,13 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanNote, setRescanNote] = useState<string | null>(null);
 
   useEffect(() => {
     setDevice(null);
     setError(null);
+    setRescanNote(null);
     if (node.type !== 'shelly') return;
     let cancelled = false;
     api
@@ -34,16 +37,35 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
     };
   }, [node]);
 
+  const rescan = async () => {
+    setRescanning(true);
+    setRescanNote(null);
+    setError(null);
+    try {
+      const result = await api.rescanDevice(node.id);
+      setDevice(await api.device(node.id));
+      onChanged();
+      setRescanNote(
+        result.ok ? 'Re-scanned.' : `${result.error ?? 'failed'}${result.online ? '' : ' — offline'}`,
+      );
+    } catch (exc) {
+      setError((exc as Error).message);
+    } finally {
+      setRescanning(false);
+    }
+  };
+
   const submitCredentials = async () => {
     setSaving(true);
     setError(null);
     try {
       await api.setCredentials(node.id, username, password);
-      const detail = await api.device(node.id);
-      setDevice(detail);
+      setDevice(await api.device(node.id));
       onChanged();
     } catch (exc) {
       setError((exc as Error).message);
+      // Re-read even on failure: a rejected password leaves the form on screen.
+      setDevice(await api.device(node.id).catch(() => device));
     } finally {
       setSaving(false);
     }
@@ -60,6 +82,15 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
           ✕
         </button>
       </div>
+
+      {node.type === 'shelly' && (
+        <div className="form-row">
+          <button className="button" onClick={rescan} disabled={rescanning}>
+            {rescanning ? 'Re-scanning…' : 'Re-scan device'}
+          </button>
+          {rescanNote && <span className="muted small">{rescanNote}</span>}
+        </div>
+      )}
 
       {node.type !== 'shelly' && (
         <div className="section">
@@ -111,7 +142,8 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
               <h3>Credentials</h3>
               <p className="muted">
                 {device.has_credentials
-                  ? 'Stored credentials are used for this device.'
+                  ? 'Credentials are stored for this device. Enter them again to replace them — ' +
+                    'a password changed on the device rejects what is stored.'
                   : 'This device requires authentication to complete its inventory.'}
               </p>
               <div className="form-row">

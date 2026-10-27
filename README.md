@@ -104,13 +104,18 @@ do not expose the port to an untrusted network.
 - **Positions** — *Save positions* controls whether dragging a node writes to
   `node_layout`. On (the default) positions survive a restart; off lets you
   rearrange the canvas without committing anything.
+- **Re-scan one device** — selecting a node opens its drawer, which has a
+  *Re-scan device* button: it re-reads just that device and rebuilds the edges,
+  instead of waiting for a scan of the whole network.
 
 The view toggles are remembered per browser in `localStorage`; the server keeps
 only the node positions.
 
 Full semantics: `docs/SPEC.md` §1–§3.
 
-## API (Phase 1)
+## API
+
+Phase 1 (read-only):
 
 ```
 GET  /api/health                      → {status, version, demo}
@@ -119,9 +124,25 @@ GET  /api/scan/{id}                   → {status, found, errors[]}
 GET  /api/devices                     → Device[] (channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info
 POST /api/devices/{id}/credentials    → {ok}; body {username, password}; re-probes
+POST /api/devices/{id}/rescan         → {ok, online, error}; re-reads one device (409 while a scan runs)
 GET  /api/graph                       → Graph {nodes, edges}
 PUT  /api/layout                      → {ok}; body [{node_id, x, y}]
 ```
+
+Phase 2, in progress — the read-only half of the guided action builder (§5.1).
+The server generates every Shelly-target URL; the client never composes one:
+
+```
+GET  /api/slots/{slot_id}             → slot detail, each URL with its parse result
+POST /api/url/build                   → {url, command, params, summary}
+                                        body {target_device_id, channel_id, command, params}
+POST /api/url/parse                   → the resolver's reading of one raw URL
+GET/PUT /api/settings                 → {ha_base_url}
+```
+
+Each channel in `GET /api/devices` carries the commands the builder can emit for
+it, with their parameters, so the form can only offer what the generator
+supports.
 
 ## Repository layout
 

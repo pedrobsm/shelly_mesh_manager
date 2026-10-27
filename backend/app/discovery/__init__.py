@@ -13,7 +13,13 @@ import httpx
 
 from ..adapters import base as adapters_base
 from ..adapters import gen1, gen2
-from ..adapters.base import DeviceInventory, ProbeResult
+from ..adapters.base import (
+    DeviceInventory,
+    ProbeResult,
+    canonical_json,
+    changed_paths,
+    strip_volatile,
+)
 from ..config import Settings
 from ..db import Database
 from ..graph import rebuild_edges
@@ -41,23 +47,49 @@ async def load_credentials(db: Database) -> dict[str, tuple[str, str]]:
     return {row["device_id"]: (row["username"], row["password"]) for row in rows}
 
 
-async def store_snapshot(db: Database, device_id: str, config_json: str) -> bool:
-    """Store a config snapshot when it differs from the newest one (keep last 10)."""
+async def store_snapshot(db: Database, device_id: str, config: dict[str, Any]) -> bool:
+    """Store a config snapshot when the config really changed (keep the last 10).
+
+    Comparison ignores the volatile fields of `VOLATILE_KEYS` — Gen1 `/settings`
+    carries a clock and other per-read values, which otherwise made every scan
+    look like a config change and filled the ring with noise (issue #12). What is
+    stored stays the verbatim config, since Phase 4 restores a device from it.
+    """
     latest = await db.fetchone(
-        "SELECT config FROM config_snapshots WHERE device_id = ? ORDER BY taken_at DESC LIMIT 1",
+        """
+        SELECT config FROM config_snapshots
+        WHERE device_id = ? ORDER BY taken_at DESC, rowid DESC LIMIT 1
+        """,
         (device_id,),
     )
-    if latest is not None and latest["config"] == config_json:
-        return False
+    stable = strip_volatile(config)
+
+    if latest is not None:
+        try:
+            previous = strip_volatile(json.loads(latest["config"]))
+        except json.JSONDecodeError:
+            previous = None
+        if previous is not None:
+            if canonical_json(previous) == canonical_json(stable):
+                return False
+            # Name what moved: on real hardware this is how an unknown volatile
+            # field gets found and added to VOLATILE_KEYS.
+            log.info(
+                "config changed on %s: %s",
+                device_id,
+                ", ".join(changed_paths(previous, stable)) or "(unknown)",
+            )
+
     await db.execute(
         "INSERT INTO config_snapshots (id, device_id, taken_at, config) VALUES (?, ?, ?, ?)",
-        (str(uuid.uuid4()), device_id, now_iso(), config_json),
+        (str(uuid.uuid4()), device_id, now_iso(), canonical_json(config)),
     )
     await db.execute(
         """
         DELETE FROM config_snapshots
         WHERE device_id = ? AND id NOT IN (
-          SELECT id FROM config_snapshots WHERE device_id = ? ORDER BY taken_at DESC LIMIT ?
+          SELECT id FROM config_snapshots
+          WHERE device_id = ? ORDER BY taken_at DESC, rowid DESC LIMIT ?
         )
         """,
         (device_id, device_id, SNAPSHOTS_PER_DEVICE),
@@ -168,7 +200,7 @@ async def store_inventory(db: Database, inv: DeviceInventory) -> None:
         ],
     )
     if inv.config:
-        await store_snapshot(db, inv.id, inv.config_json())
+        await store_snapshot(db, inv.id, inv.config)
 
 
 def partial_identity(probe_result: ProbeResult) -> tuple[str, str]:
@@ -199,21 +231,24 @@ async def inventory_device(
         inv = await adapter.inventory(client, probe_result, auth)
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 401:
+            # Mark the device as needing credentials whether or not some are
+            # stored: a password changed on the device rejects what we have, and
+            # the UI only offers the credentials form while auth_required is set.
+            await upsert_device(
+                db,
+                device_id=device_id,
+                ip=probe_result.ip,
+                gen=probe_result.gen,
+                model=model,
+                name=None,
+                fw_version=str((probe_result.info or {}).get("fw") or "") or None,
+                profile=None,
+                auth_required=True,
+                raw_info=probe_result.info,
+            )
             if creds is None:
-                await upsert_device(
-                    db,
-                    device_id=device_id,
-                    ip=probe_result.ip,
-                    gen=probe_result.gen,
-                    model=model,
-                    name=None,
-                    fw_version=str((probe_result.info or {}).get("fw") or "") or None,
-                    profile=None,
-                    auth_required=True,
-                    raw_info=probe_result.info,
-                )
                 return device_id, f"{probe_result.ip}: authentication required"
-            return device_id, f"{probe_result.ip}: credentials rejected"
+            return device_id, f"{probe_result.ip}: stored credentials rejected"
         return device_id, f"{probe_result.ip}: HTTP {exc.response.status_code if exc.response else '?'}"
     except Exception as exc:  # a misbehaving device never aborts the scan
         return device_id, f"{probe_result.ip}: {exc}"
@@ -352,3 +387,13 @@ class ScanManager:
 
     async def _run(self, scan_id: str) -> None:
         await run_scan(self.db, self.settings, scan_id=scan_id)
+
+    async def cancel(self) -> None:
+        """Stop the in-flight scan, if any (shutdown path)."""
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):  # noqa: B014 - shutdown is best effort
+            pass

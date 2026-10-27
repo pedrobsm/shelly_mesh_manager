@@ -18,7 +18,7 @@ from .api import router
 from .config import settings
 from .db import init_db
 from .demo_fixtures import seed_demo
-from .discovery import ScanManager, run_scan
+from .discovery import ScanManager
 from .graph import rebuild_edges
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -60,7 +60,9 @@ async def lifespan(app: FastAPI):
         await seed_demo(db)
         await rebuild_edges(db)
     else:
-        app.state.startup_scan = asyncio.create_task(run_scan(db, settings))
+        # The boot scan goes through the manager, so POST /api/scan answers 409
+        # while it runs instead of starting a second, overlapping scan (#11).
+        await app.state.scans.start()
 
     ticker = None
     if not settings.demo_mode and settings.scan_interval_min > 0:
@@ -69,11 +71,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for task in (ticker, getattr(app.state, "startup_scan", None)):
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+        if ticker is not None:
+            ticker.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await ticker
+        await app.state.scans.cancel()
         await db.close()
 
 

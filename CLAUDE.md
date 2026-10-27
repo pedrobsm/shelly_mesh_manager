@@ -4,22 +4,35 @@ Keep this file updated.
 
 ## Project state
 
-**Phase 1 (read-only: discovery + inventory + graph) is implemented.** Phase 2+ not started.
+**Phase 1 (read-only) is merged to `main`** (PR #16); its follow-up fixes are in PR #18.
+**Phase 2 has started.** Done so far: the §3.5 table completed (dimmer rows, Gen1 roller
+go-to-position, `Light.Toggle`), `generator.py` with the §5.2 roundtrip suite, and the
+read-only half of §5.1 (`GET /api/slots/{id}`, `POST /api/url/build|parse`, `GET/PUT
+/api/settings`). Not written yet: the device write path (§5.3), the slot editor UI (§5.4) and
+demo-mode simulated writes (§5.5).
 
 ### Layout
 ```
-backend/app/   main.py config.py db.py models.py resolver.py graph.py api.py demo_fixtures.py
+backend/app/   main.py config.py db.py models.py resolver.py generator.py graph.py api.py
+               demo_fixtures.py
                discovery/ (__init__.py = scan orchestration, mdns.py, range_scan.py)
                adapters/  (base.py, gen1.py, gen2.py)
-backend/tests/ test_resolver.py (§3.5 pattern table), test_demo_graph.py (§3.8 fixtures)
+backend/tests/ test_resolver.py (§3.5 table), test_demo_graph.py (§3.8 fixtures),
+               test_roundtrip.py (§5.2 backbone), test_snapshots.py, test_auth.py, test_api.py
 frontend/src/  api.ts, graph/ (GraphView.tsx nodeRenderer.ts styles.ts),
                components/ (DeviceDrawer.tsx EdgePopover.tsx Toolbar.tsx)
 Dockerfile · docker-compose.yml · Makefile · README.md
 ```
 
 ### Conventions worth keeping
-- The resolver (`resolver.py`) is the single place that knows the §3.5 pattern table; Phase 2's
-  URL generator must be its exact inverse and reuse `DeviceRef`/`Resolution`.
+- The resolver (`resolver.py`) is the single place that knows the §3.5 pattern table, and
+  `generator.py` is its exact inverse. `tests/test_roundtrip.py` builds its cases from
+  `supported_commands()`, so a command added to one side without a row on the other fails
+  immediately. Anything the generator cannot emit is refused with `UnsupportedCommand`, and
+  §4's form is built from `supported_commands()` so it can only offer what works.
+- Param names are per generation, not translated behind the user's back: Gen1 `timer` is Gen2
+  `toggle_after`, a Gen1 dimmer `step` (%) is a Gen2 `fade_rate`. The builder accepts the
+  canonical name and reports the native one it emitted.
 - Node cards are drawn as SVG inside `nodeRenderer.ts`; edges anchor to port rows through
   Cytoscape `source-endpoint`/`target-endpoint` offsets. Cytoscape ignores custom endpoints on
   self-loops, hence the dedicated `edge.loop` style.
@@ -34,6 +47,20 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
   Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
+- Snapshot comparison ignores volatile fields (`adapters/base.py`): `VOLATILE_KEYS` everywhere,
+  plus `VOLATILE_IN_CONTAINER` for generic names that are live readings only inside `meters[]`,
+  `emeters[]`, `rollers[]`, `relays[]`, `lights[]` — so a setting that merely shares a name such
+  as `power` is still compared (#12). What is stored stays the verbatim dump. When a snapshot
+  *is* kept, the changed key paths are logged at INFO: that is how an unlisted volatile field
+  gets found on real hardware.
+- Every scan goes through `ScanManager`, the boot scan included (#11); it is the only thing that
+  makes `POST /api/scan` answer 409 while one runs.
+- Target classification uses `match_shelly_path()` (path shape alone), command extraction uses
+  `match_command()` (path + query), so one host can never split into an external node and a
+  ghost (#13).
+- `POST /api/devices/{id}/rescan` (#17) re-reads one device through `rescan_device()` and
+  rebuilds the edges; it is refused with 409 while a full scan runs. It is one endpoint beyond
+  what SPEC §3.6 calls the complete Phase 1 surface — see the handover below.
 - Device ids are MAC-derived and stable; IPs are not. Upserts key on the id.
 - `DATA_DIR` (dev-only, default `/data`) is the one env var not in the §3.2 table.
 
@@ -42,8 +69,8 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 
 ## Issue tracking
 
-Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9
-and #10; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
+Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-done`), plus #9,
+#10 and the enhancement #17; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
 bugs #11/#12/#13 and added result comments to #2/#3/#5/#6/#7/#10; #1/#8/#9 are closed as
 verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 
@@ -58,8 +85,24 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
       (`192.168.33.0/24`, Gen1 + Gen2). **mDNS #2, offline #5, layout-persist #6, console #8
       PASS.** **#7 FAILS** (Gen1 snapshot churn — #12). **#3 caveats** (#13). Bugs #11/#12/#13
       filed, comments on #2/#3/#5/#6/#7/#10, #1/#8/#9 closed. See `docs/PHASE1-REALLAN.md`.
-- [ ] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node).**
-- [ ] **DoD #4** — needs a Shelly with authentication enabled (none on the tested LAN).
+- [x] **Fix bugs #11 (startup-scan race), #12 (Gen1 snapshot churn), #13 (resolver split node).**
+      Fixed with regression tests; #11 and #13 reproduce in the suite and are verifiable here.
+- [x] **Validate #12 on the real LAN.** Done 2026-10-26: live readings in `meters[]`/`rollers[]`/
+      `relays[]` were the cause; after the fix three untouched scans wrote 0 rows across 11 Gen1
+      devices and a rename wrote exactly one. DoD #7 passes. Details in `docs/PHASE1-REALLAN.md`.
+- [ ] **One more 3-scan run after the container-scoping follow-up.** The generic names were
+      scoped to their containers afterwards; a 3-scan run confirms nothing churns again. The
+      `config changed on <id>: …` log names the field if it does.
+- [x] **Settle the §3.5 dimmer gap.** Done: dimmer rows, plus the two more the generator
+      needed (Gen1 `go=to_pos`, Gen2 `Light.Toggle`). SPEC §1.3/§2/§3.5/§4 amended.
+- [ ] **Gen2/3 RGBW and white components have no §3.5 row**, so `supported_commands()` returns
+      nothing for them and the builder refuses those targets. Needs `RGBW.Set`/`RGB.Set` rows
+      before a Gen3 RGBW device can be a target. No such device on the tested LAN.
+- [ ] **Decide whether `POST /api/devices/{id}/rescan` (#17) joins SPEC §3.6**, which calls its
+      endpoint list the complete Phase 1 surface. The endpoint is read-only towards devices.
+- [x] **DoD #4** — validated 2026-10-27 on Gen1 and Gen3: lock, credential entry, and removing
+      the password then re-scanning all work. The one defect found (rejected credentials hid the
+      form) is fixed.
 - [ ] **Gen3 discovery (#2)** and **40-device scan timing (#6)** — no Gen3 / no 40-device LAN
       available during testing.
 - [ ] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): its

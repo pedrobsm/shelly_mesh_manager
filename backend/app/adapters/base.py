@@ -9,6 +9,135 @@ from typing import Any
 import httpx
 
 
+# Keys whose value changes between two reads of an unchanged device. They are
+# stored in the snapshot (it is a verbatim config dump, and Phase 4 restores from
+# it) but ignored when deciding whether the config changed, so an untouched Gen1
+# device does not record a fresh snapshot on every scan (issue #12).
+# Extend this list if a field is found churning on real hardware.
+VOLATILE_KEYS = frozenset(
+    {
+        "time",
+        "unixtime",
+        "unixtime_ms",
+        "uptime",
+        "uptime_s",
+        "ram_free",
+        "ram_total",
+        "ram_size",
+        "fs_free",
+        "fs_size",
+        "rssi",
+        "connected",
+        "has_update",
+        "new_version",
+        "old_version",
+        "serial",
+        "cfg_changed_cnt",
+        "last_error",
+    }
+)
+
+# Live readings carried inside a device's per-channel arrays. Their names are
+# generic enough to name a real setting elsewhere ("power" next to "max_power"),
+# so they only count as volatile under these containers — a top-level or Gen2
+# field of the same name is still compared, and a genuine config change to it
+# still records a snapshot.
+VOLATILE_IN_CONTAINER: dict[str, frozenset[str]] = {
+    "meters": frozenset({"power", "counters", "total", "timestamp", "is_valid", "overpower"}),
+    "emeters": frozenset(
+        {
+            "power",
+            "counters",
+            "total",
+            "total_returned",
+            "timestamp",
+            "is_valid",
+            "voltage",
+            "current",
+            "pf",
+        }
+    ),
+    "rollers": frozenset(
+        {
+            "power",
+            "state",
+            "is_valid",
+            "current_pos",
+            "last_direction",
+            "stop_reason",
+            "calibrating",
+            "positioning",
+            "overtemperature",
+            "safety_switch",
+        }
+    ),
+    "relays": frozenset(
+        {
+            "ison",
+            "has_timer",
+            "timer_started",
+            "timer_duration",
+            "timer_remaining",
+            "overpower",
+            "overtemperature",
+            "source",
+        }
+    ),
+    "lights": frozenset(
+        {
+            "ison",
+            "has_timer",
+            "power",
+            "timer_started",
+            "timer_duration",
+            "timer_remaining",
+            "overpower",
+            "source",
+        }
+    ),
+}
+
+
+def strip_volatile(value: Any, container: str = "") -> Any:
+    """Drop volatile fields so two reads of one device can be compared.
+
+    `container` is the name of the nearest enclosing array — 'meters', 'relays'
+    and so on — which is what scopes the generic names of VOLATILE_IN_CONTAINER.
+    """
+    if isinstance(value, dict):
+        scoped = VOLATILE_IN_CONTAINER.get(container, frozenset())
+        stripped: dict[str, Any] = {}
+        for key, item in value.items():
+            low = key.lower()
+            if low in VOLATILE_KEYS or low in scoped:
+                continue
+            stripped[key] = strip_volatile(item, low if isinstance(item, list) else container)
+        return stripped
+    if isinstance(value, list):
+        return [strip_volatile(item, container) for item in value]
+    return value
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def changed_paths(before: Any, after: Any, prefix: str = "", limit: int = 8) -> list[str]:
+    """Dotted paths whose values differ — what gets logged when a snapshot is kept."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        paths: list[str] = []
+        for key in sorted(set(before) | set(after)):
+            if len(paths) >= limit:
+                break
+            where = f"{prefix}.{key}" if prefix else str(key)
+            if key not in before or key not in after:
+                paths.append(where)
+            else:
+                paths.extend(changed_paths(before[key], after[key], where, limit - len(paths)))
+        return paths[:limit]
+    return [] if before == after else [prefix or "(root)"]
+
+
 class DeviceError(Exception):
     """A device could not be inventoried; the scan carries on regardless."""
 
@@ -60,7 +189,7 @@ class DeviceInventory:
     config: dict[str, Any] = field(default_factory=dict)
 
     def config_json(self) -> str:
-        return json.dumps(self.config, sort_keys=True, separators=(",", ":"))
+        return canonical_json(self.config)
 
 
 @dataclass

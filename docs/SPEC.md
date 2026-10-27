@@ -21,7 +21,8 @@ Self-hosted web app (Docker) that discovers Shelly devices on the LAN, visualize
 
 ### 1.3 Edges
 - One edge per action URL: from the source device's action port to the target's input port (or external port).
-- **Every edge is labeled with the normalized command**: `on`, `off`, `toggle`, `open`, `close`, `stop`, `set`, or `other` — with suffixes when parameters exist, e.g. `on · 30s` (timer), `open · 50%` (duration/position), `set · b=80` (brightness).
+- **Every edge is labeled with the normalized command**: `on`, `off`, `toggle`, `open`, `close`, `stop`, `set`, `dim up`, `dim down`, `dim stop`, or `other` — with suffixes when parameters exist, e.g. `on · 30s` (timer), `open · 50%` (duration/position), `set · b=80` (brightness), `dim up · 25%` (step).
+- Edges to an **external** target carry no Shelly command, so they are labeled by what they call instead: `webhook` for an HA webhook, otherwise the URL path (truncated). Without this a device that fans a dozen webhooks at one host draws a dozen identical `other` edges.
 - Edge status → styling:
   - `ok` — solid line.
   - `disabled` — dashed, dimmed (only rendered when "Show inactive" is on).
@@ -95,7 +96,8 @@ CREATE TABLE edges (                       -- derived cache; rebuilt after every
   target_channel_id TEXT,
   external_host     TEXT,                  -- when external/unknown
   external_path     TEXT,
-  command           TEXT NOT NULL,         -- 'on'|'off'|'toggle'|'open'|'close'|'stop'|'set'|'other'
+  command           TEXT NOT NULL,         -- 'on'|'off'|'toggle'|'open'|'close'|'stop'|'set'
+                                         -- |'dim_up'|'dim_down'|'dim_stop'|'other'
   params            TEXT,                  -- JSON: {"timer":30} / {"brightness":80} / {"duration":5}
   status            TEXT NOT NULL          -- 'ok'|'disabled'|'dangling'|'unparsed'
 );
@@ -222,12 +224,19 @@ For each `action_urls.raw_url`:
 |---|---|---|---|
 | `/relay/{i}?turn=on\|off\|toggle` | relay i | on/off/toggle | `timer` |
 | `/roller/{i}?go=open\|close\|stop` | roller i | open/close/stop | `duration` |
-| `/light/{i}?turn=…` · `/white/{i}?turn=…` · `/color/{i}?turn=…` | light/white i | on/off/toggle | `brightness`, `timer` |
+| `/roller/{i}?go=to_pos&roller_pos={p}` | roller i | set | `pos` |
+| `/light/{i}?turn=…` · `/white/{i}?turn=…` · `/color/{i}?turn=…` | light/white i | on/off/toggle | `brightness`, `timer`, `gain` |
+| `/light/{i}?brightness={b}` · `/white/{i}?…` · `/color/{i}?gain={g}` (no `turn`) | light/white i | set | `brightness`, `gain`, `timer` |
+| `/light/{i}?dim=up\|down&step={s}` · same on `/white/{i}` | light/white i | dim_up/dim_down | `step` |
+| `/light/{i}?dim=stop` · same on `/white/{i}` | light/white i | dim_stop | |
 | `/rpc/Switch.Set?id={i}&on=true\|false` | relay i | on/off | `toggle_after` |
 | `/rpc/Switch.Toggle?id={i}` | relay i | toggle | |
 | `/rpc/Cover.Open\|Close\|Stop?id={i}` | cover i | open/close/stop | `duration` |
 | `/rpc/Cover.GoToPosition?id={i}&pos={p}` | cover i | set | `pos` |
-| `/rpc/Light.Set?id={i}&…` | light i | on/off/set | `brightness` |
+| `/rpc/Light.Set?id={i}&…` | light i | on/off/set | `brightness`, `transition_duration` |
+| `/rpc/Light.DimUp\|DimDown?id={i}` | light i | dim_up/dim_down | `fade_rate` |
+| `/rpc/Light.DimStop?id={i}` | light i | dim_stop | |
+| `/rpc/Light.Toggle?id={i}` | light i | toggle | |
 
 4. Device target + matched pattern + channel exists → `ok` (or `disabled` if the slot is disabled). Channel doesn't exist → `dangling`. Device target, pattern not matched → `unparsed` (keep the edge, label `?`). Case-insensitive matching; tolerate trailing slashes and extra query params.
 
@@ -286,8 +295,8 @@ When creating or editing an action that targets another Shelly, **the app builds
 2. **Shelly device path** (the mandatory guided path):
    - **Device** — searchable select over the inventory, showing name, model, IP, generation, online state. Offline devices selectable but flagged.
    - **Channel** — select populated only with channels that actually exist on the chosen device (from `channels`).
-   - **Command** — select constrained by channel kind: relay → on / off / toggle; roller/cover → open / close / stop / go-to-position; light/white → on / off / toggle / set-brightness.
-   - **Parameters** — optional numeric fields shown only when applicable: timer (s), position (%), brightness (%), duration (s).
+   - **Command** — select constrained by channel kind: relay → on / off / toggle; roller/cover → open / close / stop / go-to-position; light/white → on / off / toggle / set-brightness / dim up / dim down / dim stop.
+   - **Parameters** — optional numeric fields shown only when applicable: timer (s), position (%), brightness (%), duration (s), dim step (%) or fade rate.
    - The app generates the URL in the **target's native syntax** (Gen1 path style for Gen1 targets; `/rpc/...` for Gen2/3) and shows it **read-only** for confirmation. There is no free-text URL field for Shelly targets.
 3. **Home Assistant webhook path:** `HA_BASE_URL` is configured once in app settings; the form asks only for the webhook id (with autocomplete from webhook ids already seen in the mesh).
 4. **Other external:** plain URL field with syntax validation — the only place raw URLs can be typed.

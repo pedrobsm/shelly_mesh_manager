@@ -6,7 +6,7 @@ import json
 from .adapters.base import channel_label, slot_label
 from .db import Database
 from .models import Edge, Graph, Node, Port
-from .resolver import DeviceRef, format_command_label, resolve
+from .resolver import DeviceRef, external_label, format_command_label, resolve
 
 EXT_PREFIX = "ext:"
 UNKNOWN_PREFIX = "unknown:"
@@ -238,6 +238,12 @@ async def build_graph(db: Database) -> Graph:
                 target_port = f"{target_id}:{path}"
                 ensure_port(node, "in", Port(id=target_port, label=path, kind="path"))
 
+        if target_type == "external" and row["status"] != "unparsed":
+            # No Shelly command to show, so say what the URL calls instead (#10).
+            label = external_label(row["external_path"], _webhook_id_of(row["external_path"] or ""))
+        else:
+            label = format_command_label(row["command"], params, row["status"])
+
         edges.append(
             Edge(
                 id=row["id"],
@@ -245,7 +251,7 @@ async def build_graph(db: Database) -> Graph:
                 sourcePort=row["src_slot_id"],
                 target=target_id,
                 targetPort=target_port,
-                command=format_command_label(row["command"], params, row["status"]),
+                command=label,
                 params=params,
                 status=row["status"],
                 rawUrl=row["raw_url"],

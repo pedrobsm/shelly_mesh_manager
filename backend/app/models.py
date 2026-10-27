@@ -71,6 +71,9 @@ class Channel(BaseModel):
     idx: int
     name: str | None = None
     label: str
+    # Commands the guided builder can emit for this channel, each with the
+    # parameters it accepts on this device's generation (SPEC §4).
+    commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class Device(BaseModel):
@@ -96,6 +99,72 @@ class DeviceDetail(Device):
     last_snapshot_at: str | None = None
 
 
+# --- Phase 2: the guided action builder (SPEC §4, §5.1) ----------------------
+
+
+class UrlParse(BaseModel):
+    """What the resolver makes of one URL, for the form and the URL list."""
+
+    raw_url: str
+    target_type: str
+    status: str
+    command: str
+    label: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    target_device_id: str | None = None
+    target_device_name: str | None = None
+    channel_id: str | None = None
+    channel_label: str | None = None
+    external_host: str | None = None
+    external_path: str | None = None
+    webhook_id: str | None = None
+    summary: str
+
+
+class SlotUrl(ActionUrl):
+    parsed: UrlParse
+
+
+class SlotDetail(BaseModel):
+    id: str
+    device_id: str
+    device_name: str | None = None
+    device_gen: int
+    source_kind: str
+    source_idx: int
+    event: str
+    native_key: str
+    enabled: bool
+    name: str | None = None
+    label: str
+    urls: list[SlotUrl] = Field(default_factory=list)
+
+
+class BuildRequest(BaseModel):
+    target_device_id: str
+    channel_id: str
+    command: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class BuiltUrlResponse(BaseModel):
+    url: str
+    command: str
+    channel_id: str
+    channel_kind: str
+    channel_idx: int
+    params: dict[str, Any] = Field(default_factory=dict)
+    summary: str
+
+
+class ParseRequest(BaseModel):
+    raw_url: str
+
+
+class AppSettings(BaseModel):
+    ha_base_url: str | None = None
+
+
 class Health(BaseModel):
     status: str
     version: str
@@ -113,6 +182,12 @@ class ScanStatus(BaseModel):
     method: str
     started_at: str
     ended_at: str | None = None
+
+
+class RescanResult(BaseModel):
+    ok: bool
+    online: bool
+    error: str | None = None
 
 
 class Credentials(BaseModel):
