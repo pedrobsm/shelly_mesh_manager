@@ -90,9 +90,8 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 - [x] **Validate #12 on the real LAN.** Done 2026-10-26: live readings in `meters[]`/`rollers[]`/
       `relays[]` were the cause; after the fix three untouched scans wrote 0 rows across 11 Gen1
       devices and a rename wrote exactly one. DoD #7 passes. Details in `docs/PHASE1-REALLAN.md`.
-- [ ] **One more 3-scan run after the container-scoping follow-up.** The generic names were
-      scoped to their containers afterwards; a 3-scan run confirms nothing churns again. The
-      `config changed on <id>: …` log names the field if it does.
+- [x] **One more 3-scan run after the container-scoping follow-up.** Done 2026-10-27 on `main`
+      @ 83c1a5b: 0 new rows on every device, no `config changed` log lines.
 - [x] **Settle the §3.5 dimmer gap.** Done: dimmer rows, plus the two more the generator
       needed (Gen1 `go=to_pos`, Gen2 `Light.Toggle`). SPEC §1.3/§2/§3.5/§4 amended.
 - [ ] **Gen2/3 RGBW and white components have no §3.5 row**, so `supported_commands()` returns
@@ -103,8 +102,16 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 - [x] **DoD #4** — validated 2026-10-27 on Gen1 and Gen3: lock, credential entry, and removing
       the password then re-scanning all work. The one defect found (rejected credentials hid the
       form) is fixed.
-- [ ] **Gen3 discovery (#2)** and **40-device scan timing (#6)** — no Gen3 / no 40-device LAN
-      available during testing.
-- [ ] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): its
-      on/off actions point at `192.168.33.35/white/30`, but that RGBW2 only has white channels
-      0–3. Real config bug in the network, correctly flagged `dangling` by the tool.
+- [ ] **Gen3 discovery (#2)** — a Gen3 relay (`S3SW-001P16EU`, 192.168.33.175) was found and
+      inventoried 2026-10-27. Gen3 RGBW and cover are still not on the LAN.
+- [ ] **40-device scan timing (#6)** — no 40-device LAN available. The /24 scan takes 56 s and
+      is dominated by dead addresses (see #2).
+- [ ] **Credentials follow-up (#4)** — re-run on a chosen test device: set a password, re-scan,
+      enter credentials, change the password and re-scan (credentials must be rejected and the
+      form must reappear), then remove the password. Needs the device chosen and an explicit
+      go-ahead, because setting a password is a write to the device.
+- [ ] **File-or-fix from the 2026-10-27 pass:** #27 (protected device gets a second record),
+      #28 (Gen1 id from hostname, not MAC), #29 (`scan_runs` left unfinished on restart),
+      #30 (external edges to one webhook all read `/webhook`, label decision).
+- [x] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): now
+      `/white/3` on the RGBW2 and resolves `ok`. Verified 2026-10-27.
