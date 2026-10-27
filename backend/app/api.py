@@ -8,13 +8,17 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from . import __version__
 from .adapters.base import channel_label, slot_label
+from .generator import UnsupportedCommand, build_url, supported_commands
 from .config import Settings
 from .db import Database
 from .discovery import ScanManager, rescan_device
-from .graph import build_graph
+from .graph import build_graph, load_device_refs
 from .models import (
     ActionSlot,
     ActionUrl,
+    AppSettings,
+    BuildRequest,
+    BuiltUrlResponse,
     Channel,
     Credentials,
     Device,
@@ -23,10 +27,15 @@ from .models import (
     Health,
     LayoutEntry,
     Ok,
+    ParseRequest,
     RescanResult,
     ScanStarted,
     ScanStatus,
+    SlotDetail,
+    SlotUrl,
+    UrlParse,
 )
+from .resolver import external_label, format_command_label, resolve
 
 router = APIRouter(prefix="/api")
 
@@ -92,8 +101,10 @@ async def _devices(db: Database, device_id: str | None = None) -> list[Device]:
             )
         )
 
+    gens = {row["id"]: row["gen"] for row in device_rows}
     channels_by_device: dict[str, list[Channel]] = {}
     for row in channel_rows:
+        commands = supported_commands(gens.get(row["device_id"], 1), row["kind"])
         channels_by_device.setdefault(row["device_id"], []).append(
             Channel(
                 id=row["id"],
@@ -101,6 +112,7 @@ async def _devices(db: Database, device_id: str | None = None) -> list[Device]:
                 idx=row["idx"],
                 name=row["name"],
                 label=row["name"] or channel_label(row["kind"], row["idx"]),
+                commands={command: list(params) for command, params in commands.items()},
             )
         )
 
@@ -230,6 +242,169 @@ async def rescan(request: Request, device_id: str) -> RescanResult:
     return RescanResult(
         ok=error is None, online=bool(state["online"]) if state is not None else False, error=error
     )
+
+
+# --- Phase 2: the guided action builder (SPEC §5.1) ---------------------------
+
+
+async def _parse_url(db: Database, raw_url: str, *, slot_enabled: bool = True) -> UrlParse:
+    """Resolve one URL and dress it up for the form: names, labels, a summary."""
+    refs = await load_device_refs(db)
+    result = resolve(raw_url, refs, slot_enabled=slot_enabled)
+
+    device_name: str | None = None
+    channel_label_text: str | None = None
+    if result.target_device_id:
+        row = await db.fetchone(
+            "SELECT name, id FROM devices WHERE id = ?", (result.target_device_id,)
+        )
+        device_name = (row["name"] or row["id"]) if row is not None else None
+    if result.target_channel_id:
+        row = await db.fetchone(
+            "SELECT kind, idx, name FROM channels WHERE id = ?", (result.target_channel_id,)
+        )
+        if row is not None:
+            channel_label_text = row["name"] or channel_label(row["kind"], row["idx"])
+
+    if result.target_type == "external" and result.status != "unparsed":
+        label = external_label(result.external_path, result.webhook_id)
+    else:
+        label = format_command_label(result.command, result.params, result.status)
+
+    if result.target_type == "device":
+        target = " · ".join(filter(None, [device_name, channel_label_text])) or "device"
+    elif result.target_type == "unknown_shelly":
+        target = f"{result.external_host} (not in inventory)"
+    else:
+        target = "Home Assistant" if result.webhook_id else (result.external_host or "external")
+
+    return UrlParse(
+        raw_url=raw_url,
+        target_type=result.target_type,
+        status=result.status,
+        command=result.command,
+        label=label,
+        params=result.params,
+        target_device_id=result.target_device_id,
+        target_device_name=device_name,
+        channel_id=result.target_channel_id,
+        channel_label=channel_label_text,
+        external_host=result.external_host,
+        external_path=result.external_path,
+        webhook_id=result.webhook_id,
+        summary=f"→ {target} · {label}",
+    )
+
+
+@router.get("/slots/{slot_id}", response_model=SlotDetail)
+async def get_slot(request: Request, slot_id: str) -> SlotDetail:
+    db = _db(request)
+    row = await db.fetchone(
+        """
+        SELECT s.*, d.name AS device_name, d.gen AS device_gen
+        FROM action_slots s JOIN devices d ON d.id = s.device_id
+        WHERE s.id = ?
+        """,
+        (slot_id,),
+    )
+    if row is None:
+        raise _fail(404, "not_found", f"no slot {slot_id}")
+
+    url_rows = await db.fetchall(
+        "SELECT * FROM action_urls WHERE slot_id = ? ORDER BY position", (slot_id,)
+    )
+    urls = [
+        SlotUrl(
+            id=url["id"],
+            position=url["position"],
+            raw_url=url["raw_url"],
+            parsed=await _parse_url(db, url["raw_url"], slot_enabled=bool(row["enabled"])),
+        )
+        for url in url_rows
+    ]
+    return SlotDetail(
+        id=row["id"],
+        device_id=row["device_id"],
+        device_name=row["device_name"],
+        device_gen=row["device_gen"],
+        source_kind=row["source_kind"],
+        source_idx=row["source_idx"],
+        event=row["event"],
+        native_key=row["native_key"],
+        enabled=bool(row["enabled"]),
+        name=row["name"],
+        label=slot_label(row["source_kind"], row["source_idx"], row["event"]),
+        urls=urls,
+    )
+
+
+@router.post("/url/parse", response_model=UrlParse)
+async def parse_url(request: Request, body: ParseRequest) -> UrlParse:
+    return await _parse_url(_db(request), body.raw_url)
+
+
+@router.post("/url/build", response_model=BuiltUrlResponse)
+async def build_action_url(request: Request, body: BuildRequest) -> BuiltUrlResponse:
+    """The server, not the client, generates every Shelly-target URL (§5.1)."""
+    db = _db(request)
+    device = await db.fetchone(
+        "SELECT id, ip, gen, name FROM devices WHERE id = ?", (body.target_device_id,)
+    )
+    if device is None:
+        raise _fail(404, "not_found", f"no device {body.target_device_id}")
+    channel = await db.fetchone(
+        "SELECT id, kind, idx, name FROM channels WHERE id = ? AND device_id = ?",
+        (body.channel_id, body.target_device_id),
+    )
+    if channel is None:
+        raise _fail(
+            404, "not_found", f"device {body.target_device_id} has no channel {body.channel_id}"
+        )
+
+    try:
+        built = build_url(
+            device["ip"], device["gen"], channel["kind"], channel["idx"], body.command, body.params
+        )
+    except UnsupportedCommand as exc:
+        raise _fail(422, "unsupported_command", str(exc)) from exc
+
+    name = device["name"] or device["id"]
+    label = format_command_label(built.command, built.params, "ok")
+    target_label = channel["name"] or channel_label(channel["kind"], channel["idx"])
+    return BuiltUrlResponse(
+        url=built.url,
+        command=built.command,
+        channel_id=channel["id"],
+        channel_kind=built.channel_kind,
+        channel_idx=built.channel_idx,
+        params=built.params,
+        summary=f"→ {name} · {target_label} · {label}",
+    )
+
+
+@router.get("/settings", response_model=AppSettings)
+async def get_settings(request: Request) -> AppSettings:
+    row = await _db(request).fetchone(
+        "SELECT value FROM app_settings WHERE key = 'ha_base_url'"
+    )
+    return AppSettings(ha_base_url=row["value"] if row is not None else None)
+
+
+@router.put("/settings", response_model=AppSettings)
+async def put_settings(request: Request, body: AppSettings) -> AppSettings:
+    value = (body.ha_base_url or "").strip().rstrip("/")
+    db = _db(request)
+    if value:
+        await db.execute(
+            """
+            INSERT INTO app_settings (key, value) VALUES ('ha_base_url', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (value,),
+        )
+    else:
+        await db.execute("DELETE FROM app_settings WHERE key = 'ha_base_url'")
+    return AppSettings(ha_base_url=value or None)
 
 
 @router.get("/graph", response_model=Graph)

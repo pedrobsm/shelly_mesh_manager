@@ -224,6 +224,7 @@ For each `action_urls.raw_url`:
 |---|---|---|---|
 | `/relay/{i}?turn=on\|off\|toggle` | relay i | on/off/toggle | `timer` |
 | `/roller/{i}?go=open\|close\|stop` | roller i | open/close/stop | `duration` |
+| `/roller/{i}?go=to_pos&roller_pos={p}` | roller i | set | `pos` |
 | `/light/{i}?turn=…` · `/white/{i}?turn=…` · `/color/{i}?turn=…` | light/white i | on/off/toggle | `brightness`, `timer`, `gain` |
 | `/light/{i}?brightness={b}` · `/white/{i}?…` · `/color/{i}?gain={g}` (no `turn`) | light/white i | set | `brightness`, `gain`, `timer` |
 | `/light/{i}?dim=up\|down&step={s}` · same on `/white/{i}` | light/white i | dim_up/dim_down | `step` |
@@ -235,6 +236,7 @@ For each `action_urls.raw_url`:
 | `/rpc/Light.Set?id={i}&…` | light i | on/off/set | `brightness`, `transition_duration` |
 | `/rpc/Light.DimUp\|DimDown?id={i}` | light i | dim_up/dim_down | `fade_rate` |
 | `/rpc/Light.DimStop?id={i}` | light i | dim_stop | |
+| `/rpc/Light.Toggle?id={i}` | light i | toggle | |
 
 4. Device target + matched pattern + channel exists → `ok` (or `disabled` if the slot is disabled). Channel doesn't exist → `dangling`. Device target, pattern not matched → `unparsed` (keep the edge, label `?`). Case-insensitive matching; tolerate trailing slashes and extra query params.
 

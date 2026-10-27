@@ -4,26 +4,35 @@ Keep this file updated.
 
 ## Project state
 
-**Phase 1 (read-only: discovery + inventory + graph) is implemented and merged to `main`**
-(PR #16, 2026-10-23). Bugs #11/#12/#13 are fixed; **#12 was validated on the live LAN
-(2026-10-26)** — see `docs/PHASE1-REALLAN.md`. Phase 2 not started; before it does, the §3.5
-dimmer-row gap below should be settled, because §5.2 requires the generator to invert that
-table exactly.
+**Phase 1 (read-only) is merged to `main`** (PR #16); its follow-up fixes are in PR #18.
+**Phase 2 has started.** Done so far: the §3.5 table completed (dimmer rows, Gen1 roller
+go-to-position, `Light.Toggle`), `generator.py` with the §5.2 roundtrip suite, and the
+read-only half of §5.1 (`GET /api/slots/{id}`, `POST /api/url/build|parse`, `GET/PUT
+/api/settings`). Not written yet: the device write path (§5.3), the slot editor UI (§5.4) and
+demo-mode simulated writes (§5.5).
 
 ### Layout
 ```
-backend/app/   main.py config.py db.py models.py resolver.py graph.py api.py demo_fixtures.py
+backend/app/   main.py config.py db.py models.py resolver.py generator.py graph.py api.py
+               demo_fixtures.py
                discovery/ (__init__.py = scan orchestration, mdns.py, range_scan.py)
                adapters/  (base.py, gen1.py, gen2.py)
-backend/tests/ test_resolver.py (§3.5 pattern table), test_demo_graph.py (§3.8 fixtures)
+backend/tests/ test_resolver.py (§3.5 table), test_demo_graph.py (§3.8 fixtures),
+               test_roundtrip.py (§5.2 backbone), test_snapshots.py, test_auth.py, test_api.py
 frontend/src/  api.ts, graph/ (GraphView.tsx nodeRenderer.ts styles.ts),
                components/ (DeviceDrawer.tsx EdgePopover.tsx Toolbar.tsx)
 Dockerfile · docker-compose.yml · Makefile · README.md
 ```
 
 ### Conventions worth keeping
-- The resolver (`resolver.py`) is the single place that knows the §3.5 pattern table; Phase 2's
-  URL generator must be its exact inverse and reuse `DeviceRef`/`Resolution`.
+- The resolver (`resolver.py`) is the single place that knows the §3.5 pattern table, and
+  `generator.py` is its exact inverse. `tests/test_roundtrip.py` builds its cases from
+  `supported_commands()`, so a command added to one side without a row on the other fails
+  immediately. Anything the generator cannot emit is refused with `UnsupportedCommand`, and
+  §4's form is built from `supported_commands()` so it can only offer what works.
+- Param names are per generation, not translated behind the user's back: Gen1 `timer` is Gen2
+  `toggle_after`, a Gen1 dimmer `step` (%) is a Gen2 `fade_rate`. The builder accepts the
+  canonical name and reports the native one it emitted.
 - Node cards are drawn as SVG inside `nodeRenderer.ts`; edges anchor to port rows through
   Cytoscape `source-endpoint`/`target-endpoint` offsets. Cytoscape ignores custom endpoints on
   self-loops, hence the dedicated `edge.loop` style.
@@ -84,12 +93,16 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 - [ ] **One more 3-scan run after the container-scoping follow-up.** The generic names were
       scoped to their containers afterwards; a 3-scan run confirms nothing churns again. The
       `config changed on <id>: …` log names the field if it does.
-- [ ] **Settle the §3.5 dimmer gap before Phase 2** (noted on #13): no table row covers
-      `?dim=`/`?brightness=`, so such a URL to an inventoried dimmer resolves `unparsed`.
-      §5.2 makes the generator the table's exact inverse, so the hole should be filled first.
+- [x] **Settle the §3.5 dimmer gap.** Done: dimmer rows, plus the two more the generator
+      needed (Gen1 `go=to_pos`, Gen2 `Light.Toggle`). SPEC §1.3/§2/§3.5/§4 amended.
+- [ ] **Gen2/3 RGBW and white components have no §3.5 row**, so `supported_commands()` returns
+      nothing for them and the builder refuses those targets. Needs `RGBW.Set`/`RGB.Set` rows
+      before a Gen3 RGBW device can be a target. No such device on the tested LAN.
 - [ ] **Decide whether `POST /api/devices/{id}/rescan` (#17) joins SPEC §3.6**, which calls its
       endpoint list the complete Phase 1 surface. The endpoint is read-only towards devices.
-- [ ] **DoD #4** — needs a Shelly with authentication enabled (none on the tested LAN).
+- [x] **DoD #4** — validated 2026-10-27 on Gen1 and Gen3: lock, credential entry, and removing
+      the password then re-scanning all work. The one defect found (rejected credentials hid the
+      form) is fixed.
 - [ ] **Gen3 discovery (#2)** and **40-device scan timing (#6)** — no Gen3 / no 40-device LAN
       available during testing.
 - [ ] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): its

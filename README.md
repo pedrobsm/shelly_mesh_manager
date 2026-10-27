@@ -113,7 +113,9 @@ only the node positions.
 
 Full semantics: `docs/SPEC.md` §1–§3.
 
-## API (Phase 1)
+## API
+
+Phase 1 (read-only):
 
 ```
 GET  /api/health                      → {status, version, demo}
@@ -126,6 +128,21 @@ POST /api/devices/{id}/rescan         → {ok, online, error}; re-reads one devi
 GET  /api/graph                       → Graph {nodes, edges}
 PUT  /api/layout                      → {ok}; body [{node_id, x, y}]
 ```
+
+Phase 2, in progress — the read-only half of the guided action builder (§5.1).
+The server generates every Shelly-target URL; the client never composes one:
+
+```
+GET  /api/slots/{slot_id}             → slot detail, each URL with its parse result
+POST /api/url/build                   → {url, command, params, summary}
+                                        body {target_device_id, channel_id, command, params}
+POST /api/url/parse                   → the resolver's reading of one raw URL
+GET/PUT /api/settings                 → {ha_base_url}
+```
+
+Each channel in `GET /api/devices` carries the commands the builder can emit for
+it, with their parameters, so the form can only offer what the generator
+supports.
 
 ## Repository layout
 

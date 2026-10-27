@@ -67,6 +67,7 @@ GEN1_PATH_KINDS: dict[str, tuple[str, ...]] = {
 
 # Gen2/3 RPC methods of the §3.5 table -> candidate channel kinds.
 RPC_METHOD_KINDS: dict[str, tuple[str, ...]] = {
+    "light.toggle": ("light", "rgbw", "white"),
     "light.dimup": ("light", "rgbw", "white"),
     "light.dimdown": ("light", "rgbw", "white"),
     "light.dimstop": ("light", "rgbw", "white"),
@@ -221,6 +222,10 @@ def match_command(path: str, query: Mapping[str, str]) -> CommandMatch | None:
                 return CommandMatch(
                     GEN1_PATH_KINDS["roller"], idx, go, _collect(query, {"duration": "duration"})
                 )
+            if go == "to_pos":
+                return CommandMatch(
+                    GEN1_PATH_KINDS["roller"], idx, CMD_SET, _collect(query, {"roller_pos": "pos"})
+                )
 
         elif head in {"light", "white", "color"}:
             kinds = GEN1_PATH_KINDS[head]
@@ -270,6 +275,9 @@ def match_command(path: str, query: Mapping[str, str]) -> CommandMatch | None:
             return CommandMatch(
                 ("cover", "roller"), idx, CMD_SET, _collect(query, {"pos": "pos"})
             )
+
+        elif method == "light.toggle":
+            return CommandMatch(RPC_METHOD_KINDS[method], idx, CMD_TOGGLE, {})
 
         elif method in {"light.dimup", "light.dimdown"}:
             return CommandMatch(

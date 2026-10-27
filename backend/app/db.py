@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS node_layout (
   x REAL NOT NULL, y REAL NOT NULL
 );
 
+-- Phase 2 (SPEC §5.1 GET/PUT /api/settings): app-level settings such as the
+-- Home Assistant base URL the webhook builder writes into generated URLs.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_channels_device ON channels(device_id);
 CREATE INDEX IF NOT EXISTS idx_slots_device ON action_slots(device_id);
 CREATE INDEX IF NOT EXISTS idx_urls_slot ON action_urls(slot_id);
