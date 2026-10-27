@@ -9,7 +9,8 @@ Keep this file updated.
 **Phase 2 is in progress.** Done: the §3.5 table completed, `generator.py` + the §5.2
 roundtrip suite, all of §5.1 (`GET/PUT /api/slots/{id}`, `POST /api/url/build|parse|test`,
 `GET/PUT /api/settings`), the §5.3 write adapters with verify-after-write, per-device locking
-and the audit log, and §5.5 simulated writes. Not written yet: the slot editor UI (§5.4).
+and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6:
+the hardware pass (#21), and a way to add an action to a Gen2/3 event that has no webhook yet.
 
 ### Layout
 ```
@@ -52,6 +53,12 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   A write is never reported as a success on the strength of a 200 alone.
 - `SlotDetail.revision` is a hash of the stored slot; the editor sends it back as
   `expect_revision` so a re-scan in the meantime is caught rather than overwritten.
+- A `raw_external` URL aimed at an inventoried device is refused — unless it is already stored
+  on that slot, which lets the editor keep an unparsed URL it cannot rebuild without letting
+  the client compose a new Shelly URL.
+- Ports are painted into the node's image, so Cytoscape cannot hit-test them. `slotAt()` in
+  `GraphView.tsx` maps a click back to a port row using the geometry the renderer used; that is
+  what opens the slot editor.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Snapshot comparison ignores volatile fields (`adapters/base.py`): `VOLATILE_KEYS` everywhere,
   plus `VOLATILE_IN_CONTAINER` for generic names that are live readings only inside `meters[]`,

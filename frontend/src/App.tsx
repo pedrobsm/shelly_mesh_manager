@@ -4,6 +4,7 @@ import { api } from './api';
 import type { Device, Graph, GraphEdge, GraphNode } from './api';
 import GraphView, { type ViewOptions } from './graph/GraphView';
 import DeviceDrawer from './components/DeviceDrawer';
+import SlotEditor from './components/SlotEditor';
 import EdgePopover from './components/EdgePopover';
 import Toolbar from './components/Toolbar';
 
@@ -39,6 +40,7 @@ export default function App() {
   const [options, setOptions] = useState<ViewOptions>(loadOptions);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
+  const [editingSlot, setEditingSlot] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
@@ -126,9 +128,25 @@ export default function App() {
           devices={devices}
           options={options}
           relayoutToken={relayoutToken}
-          onNodeClick={setSelectedNode}
+          onNodeClick={(node) => {
+            setSelectedNode(node);
+            setEditingSlot(null);
+          }}
           onEdgeClick={setSelectedEdge}
+          onPortClick={(slotId) => {
+            setEditingSlot(slotId);
+            setSelectedNode(null);
+          }}
         />
+        {editingSlot && (
+          <SlotEditor
+            slotId={editingSlot}
+            devices={devices}
+            demo={demo}
+            onClose={() => setEditingSlot(null)}
+            onSaved={() => void refresh()}
+          />
+        )}
         {selectedNode && (
           <DeviceDrawer
             node={selectedNode}

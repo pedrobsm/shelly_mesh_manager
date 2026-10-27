@@ -82,9 +82,12 @@ async def ha_base_url(db: Database) -> str | None:
     return row["value"] if row is not None else None
 
 
-async def resolve_specs(db: Database, specs: list[Any]) -> list[str]:
+async def resolve_specs(
+    db: Database, specs: list[Any], already_stored: list[str] | None = None
+) -> list[str]:
     """Turn the editor's URL specs into concrete URLs, refusing what §5.1 forbids."""
     refs = await load_device_refs(db)
+    stored = set(already_stored or ())
     urls: list[str] = []
 
     for spec in specs:
@@ -131,9 +134,12 @@ async def resolve_specs(db: Database, specs: list[Any]) -> list[str]:
             if not raw:
                 raise SlotWriteError(422, "invalid_url", "a URL is required")
             parsed = resolve(raw, refs)
-            if parsed.target_type == "device":
+            if parsed.target_type == "device" and raw not in stored:
                 # §4/§5.1: the app builds every Shelly-target URL, and the rule
-                # is enforced here rather than only in the form.
+                # is enforced here rather than only in the form. A URL already on
+                # this slot may be kept verbatim — the editor cannot rebuild one
+                # the resolver does not understand, and keeping it introduces
+                # nothing the device does not already have.
                 raise SlotWriteError(
                     422,
                     "raw_url_targets_a_device",
@@ -246,7 +252,7 @@ async def apply_slot_update(
             {"revision": current.revision},
         )
 
-    urls = await resolve_specs(db, list(update.urls))
+    urls = await resolve_specs(db, list(update.urls), current.urls)
     wanted = SlotState(update.enabled, urls)
     delete_hook = bool(slot["gen"] >= 2 and not urls)
     if delete_hook and not update.confirm_delete:

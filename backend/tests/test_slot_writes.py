@@ -209,3 +209,28 @@ def test_url_test_is_simulated_in_demo_mode(client):
 
 def test_unknown_slots_are_404(client):
     assert client.put("/api/slots/nope", json={"enabled": True, "urls": []}).status_code == 404
+
+
+def test_a_url_already_on_the_slot_may_be_kept_verbatim(client):
+    """An unparsed URL cannot be rebuilt, so keeping it must not be refused."""
+    slot = "shellyplus2pm-garage:hook:1"  # its URL is /status on the hall device
+    stored = client.get(f"/api/slots/{slot}").json()["urls"][0]["raw_url"]
+    assert stored == "http://192.168.1.11/status"
+
+    response = client.put(
+        f"/api/slots/{slot}",
+        json={"enabled": False, "urls": [{"kind": "raw_external", "url": stored}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+
+    # A *different* URL at the same device is still refused.
+    refused = client.put(
+        f"/api/slots/{slot}",
+        json={
+            "enabled": True,
+            "urls": [{"kind": "raw_external", "url": "http://192.168.1.11/settings"}],
+        },
+    )
+    assert refused.status_code == 422
+    assert refused.json()["error"] == "raw_url_targets_a_device"

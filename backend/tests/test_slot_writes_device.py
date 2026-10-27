@@ -123,10 +123,16 @@ def client(tmp_path, monkeypatch, device):
     monkeypatch.setattr("app.discovery.run_scan", seeding_scan)
     monkeypatch.setattr("app.slots._client", fake_client)
     with TestClient(app.main.app) as test_client:
-        for _ in range(50):  # let the seeding "scan" finish
-            if test_client.get("/api/devices").json():
+        # Wait for the whole seeding "scan", not just its first device: a
+        # half-written inventory made these tests flaky.
+        for _ in range(100):
+            if test_client.get(f"/api/slots/{GEN1_SLOT}").status_code == 200 and (
+                test_client.get(f"/api/slots/{GEN2_SLOT}").status_code == 200
+            ):
                 break
             time.sleep(0.02)
+        else:  # pragma: no cover - the fixtures seed in milliseconds
+            pytest.fail("the seeded inventory never appeared")
         yield test_client
 
 
