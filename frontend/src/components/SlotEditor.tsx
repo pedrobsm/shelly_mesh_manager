@@ -7,6 +7,9 @@ type Props = {
   slotId: string;
   devices: Record<string, Device>;
   demo: boolean;
+  /** The view's "show inactive actions" toggle, so a hidden result can be explained. */
+  showInactive: boolean;
+  onShowInactive: () => void;
   onClose: () => void;
   onSaved: () => void;
 };
@@ -69,7 +72,15 @@ const EMPTY_DRAFT: Draft = {
   rawUrl: '',
 };
 
-export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: Props) {
+export default function SlotEditor({
+  slotId,
+  devices,
+  demo,
+  showInactive,
+  onShowInactive,
+  onClose,
+  onSaved,
+}: Props) {
   // Creating a Gen2/3 webhook gives the slot the id the device chose, so the
   // editor follows it rather than re-reading one that no longer exists (#33).
   const [currentId, setCurrentId] = useState(slotId);
@@ -442,6 +453,15 @@ export default function SlotEditor({ slotId, devices, demo, onClose, onSaved }: 
         <button className="button" onClick={() => setDraft({ ...EMPTY_DRAFT })}>
           Add URL
         </button>
+      )}
+
+      {slot.urls.length > 0 && !slot.enabled && !showInactive && (
+        <p className="muted small">
+          Saved, but this slot is disabled, so the graph hides its edges.{' '}
+          <button className="button" onClick={onShowInactive}>
+            Show inactive actions
+          </button>
+        </p>
       )}
 
       {error && <p className="error">{error}</p>}

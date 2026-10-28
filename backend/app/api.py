@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -146,12 +147,13 @@ async def health(request: Request) -> Health:
 
 
 @router.post("/scan", response_model=ScanStarted, status_code=202)
-async def start_scan(request: Request) -> ScanStarted:
+async def start_scan(request: Request, scope: Literal["full", "known"] = "full") -> ScanStarted:
+    """`full` discovers; `known` re-reads only the devices already inventoried."""
     scans = _scans(request)
     if scans.running:
         raise _fail(409, "scan_running", "a scan is already running")
     try:
-        scan_id = await scans.start()
+        scan_id = await scans.start(scope)
     except RuntimeError as exc:
         raise _fail(409, "scan_running", str(exc)) from exc
     return ScanStarted(scan_id=scan_id)

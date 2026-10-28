@@ -43,7 +43,7 @@ def edges(client) -> dict[str, dict]:
 def audit(client, tmp_path) -> list[tuple[str, str]]:
     import sqlite3
 
-    connection = sqlite3.connect(tmp_path / "mesh.db")
+    connection = sqlite3.connect(tmp_path / "mesh.db", timeout=10)
     try:
         return connection.execute("SELECT action, result FROM audit_log ORDER BY rowid").fetchall()
     finally:

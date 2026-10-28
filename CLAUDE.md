@@ -9,7 +9,9 @@ Keep this file updated.
 **Phase 2 is in progress.** Done: the §3.5 table completed, `generator.py` + the §5.2
 roundtrip suite, all of §5.1 (`GET/PUT /api/slots/{id}`, `POST /api/url/build|parse|test`,
 `GET/PUT /api/settings`), the §5.3 write adapters with verify-after-write, per-device locking
-and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6: the hardware pass (#21).
+and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6: the
+hardware pass (#21). The 2026-10-28 round added the two scan buttons, slot editing from the
+device drawer, and fixed the Gen1 action write (#35–#38).
 
 ### Layout
 ```
@@ -60,9 +62,24 @@ Dockerfile · docker-compose.yml · Makefile · README.md
   Plus/Gen3 device gets added (#33). Writing one calls `Webhook.Create` and the slot is re-keyed
   to `…:hook:{id}` with the id the device chose, so use `gen2.hook_id_of()` rather than parsing
   the slot id by hand.
+- Gen1 action writes hand-build their query string (`gen1.action_query()`): the `urls[]` brackets
+  must reach the firmware literally. A normal query builder percent-encodes the parameter *name*
+  to `urls%5B%5D`, which the firmware answers 200 to while applying only `enabled` — so a slot
+  could be switched on and off but never edited or cleared (#38).
+- `POST /api/scan?scope=known` re-reads only the inventoried IPs (`discovery.known_addresses()`)
+  and never marks anything offline when the inventory is empty; it refuses with a message instead
+  (#35). Both scopes go through `ScanManager`, so the 409 still holds.
+- `Database.transaction()` is the only way to run several statements as one unit; `db.execute()`
+  takes the connection lock per statement, which let two concurrent `rebuild_edges()` calls (a
+  scan finishing while a slot is saved) collide on `edges.id`.
+- A save that leaves a slot disabled reports it in the editor with a "show inactive actions"
+  shortcut: the edges *are* created, the default view just hides them, which otherwise reads as a
+  write that did nothing (#37).
 - Ports are painted into the node's image, so Cytoscape cannot hit-test them. `slotAt()` in
   `GraphView.tsx` maps a click back to a port row using the geometry the renderer used; that is
-  what opens the slot editor.
+  one way to open the slot editor — a synthetic `tap` carries no position, which means the node
+  itself. The other way is the slot rows in the device drawer, which are buttons (#36); the port
+  is a small target and a dense graph can make it unhittable.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Snapshot comparison ignores volatile fields (`adapters/base.py`): `VOLATILE_KEYS` everywhere,
   plus `VOLATILE_IN_CONTAINER` for generic names that are live readings only inside `meters[]`,

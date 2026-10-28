@@ -107,6 +107,13 @@ do not expose the port to an untrusted network.
 - **Re-scan one device** — selecting a node opens its drawer, which has a
   *Re-scan device* button: it re-reads just that device and rebuilds the edges,
   instead of waiting for a scan of the whole network.
+- **Two scan buttons** — *Full Scan* discovers devices (mDNS, or the range scan
+  when `SCAN_SUBNET` is set) and then reads everything it finds; *Scan* skips
+  discovery and re-reads only the devices already in the inventory, which is much
+  faster on a large subnet. It is disabled until a full scan has found something.
+- **Editing an action from the drawer** — the action rows in a device's drawer are
+  clickable: each one opens the slot editor for that slot, so adding, changing or
+  removing a URL does not depend on hitting the small port marker on the node.
 
 The view toggles are remembered per browser in `localStorage`; the server keeps
 only the node positions.
@@ -119,7 +126,8 @@ Phase 1 (read-only):
 
 ```
 GET  /api/health                      → {status, version, demo}
-POST /api/scan                        → {scan_id}   (409 while a scan runs)
+POST /api/scan?scope=full|known       → {scan_id}   (409 while a scan runs)
+                                        full (default) discovers; known re-reads the inventory only
 GET  /api/scan/{id}                   → {status, found, errors[]}
 GET  /api/devices                     → Device[] (channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info

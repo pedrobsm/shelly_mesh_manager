@@ -244,7 +244,9 @@ For each `action_urls.raw_url`:
 ### 3.6 Backend API (complete Phase 1 surface)
 ```
 GET  /api/health                      → {status, version, demo}
-POST /api/scan                        → {scan_id}   (409 if a scan is running)
+POST /api/scan?scope=full|known       → {scan_id}   (409 if a scan is running)
+     scope=full (default) discovers, then reads everything it finds;
+     scope=known skips discovery and re-reads only the inventoried devices.
 GET  /api/scan/{id}                   → {status: running|done|error, found, errors[]}
 GET  /api/devices                     → Device[] (with channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info
@@ -255,7 +257,7 @@ PUT  /api/layout                      → {ok} ; body {node_id, x, y}[]
 Errors: JSON `{error, detail}` with correct status codes. Log per-device failures into `scan_runs.errors`; a scan never aborts because one device misbehaves.
 
 ### 3.7 Frontend behavior (Phase 1)
-Toolbar: Scan button with progress, search box, toggles (external nodes / inactive actions), re-layout button. Graph per §1. Drawer and popover per §1.4. Dangling/unparsed counts shown as badges in the toolbar. No editing UI anywhere in Phase 1.
+Toolbar: two scan buttons with progress — *Full Scan* (`scope=full`) and *Scan* (`scope=known`, re-reads the inventory only; disabled while nothing is known) — search box, toggles (external nodes / inactive actions), re-layout button. Graph per §1. Drawer and popover per §1.4. Dangling/unparsed counts shown as badges in the toolbar. No editing UI anywhere in Phase 1.
 
 ### 3.8 Demo mode (the "runs at first try" guarantee)
 `DEMO_MODE=true` seeds the DB from `demo_fixtures.py` and disables all network I/O. Fixture network (build exactly this):
@@ -334,10 +336,12 @@ Exact inverse of the resolver table (§3.5), emitting the **target's native synt
 - One in-flight write per device (per-device async lock); writes rejected with a clear error when the device is offline.
 
 ### 5.4 Frontend
-- Clicking an output port opens the slot editor drawer: enable/disable toggle, URL list where each row shows the parsed summary ("→ Hall · Relay 0 · on · 30s") or the raw URL if external/unparsed.
+- Clicking an output port — or an action row in the device drawer — opens the slot editor drawer: enable/disable toggle, URL list where each row shows the parsed summary ("→ Hall · Relay 0 · on · 30s") or the raw URL if external/unparsed.
 - "Add URL" launches the wizard steps from §4 (target type → device → channel → command → params). **Test** button per row fires `POST /api/url/test` and shows the HTTP result inline. Unparsed rows show "Rebuild with wizard".
 - Optimistic-lock guard: the drawer stores the slot state it loaded; if a re-scan changed the device config meanwhile, save is blocked with "device changed — reload".
-- On successful save the graph updates from the API response alone (no full re-scan).
+- On successful save the graph updates from the API response alone (no full re-scan). A save that
+  leaves the slot disabled says so, because the new edges are then hidden unless "show inactive
+  actions" is on — otherwise a successful write looks like nothing happened.
 
 ### 5.5 Demo mode in Phase 2
 `DEMO_MODE=true` supports the full editing flow: writes mutate the fixture DB only and are marked `simulated` in `audit_log`; `POST /api/url/test` returns a fake 200 after 150 ms. Every Phase 2 UI flow must be exercisable in demo mode.

@@ -68,17 +68,21 @@ export default function App() {
     refresh().catch((exc: Error) => setStatus(exc.message));
   }, [refresh]);
 
-  const runScan = useCallback(async () => {
+  const runScan = useCallback(async (scope: 'full' | 'known') => {
     setScanning(true);
-    setStatus('Scan started…');
+    setStatus(scope === 'full' ? 'Full scan started…' : 'Re-reading known devices…');
     try {
-      const { scan_id: scanId } = await api.startScan();
+      const { scan_id: scanId } = await api.startScan(scope);
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         const state = await api.scanStatus(scanId);
         if (state.status === 'running') {
           setStatus(`Scanning (${state.method})…`);
           continue;
+        }
+        if (state.status === 'error' && state.errors.length) {
+          setStatus(state.errors[0]);
+          break;
         }
         setStatus(
           `${state.status === 'error' ? 'Scan failed' : 'Scan done'} · ${state.found} devices` +
@@ -143,6 +147,8 @@ export default function App() {
             slotId={editingSlot}
             devices={devices}
             demo={demo}
+            showInactive={options.showInactive}
+            onShowInactive={() => setOptions((current) => ({ ...current, showInactive: true }))}
             onClose={() => setEditingSlot(null)}
             onSaved={() => void refresh()}
           />
@@ -152,6 +158,10 @@ export default function App() {
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
             onChanged={() => void refresh()}
+            onEditSlot={(slotId) => {
+              setEditingSlot(slotId);
+              setSelectedNode(null);
+            }}
           />
         )}
         {selectedEdge && (

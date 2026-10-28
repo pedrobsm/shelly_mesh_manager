@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -139,6 +140,26 @@ async def inventory(
     )
 
 
+def action_query(native_key: str, idx: int, enabled: bool, urls: list[str]) -> str:
+    """The query string of a Gen1 action write (SPEC §5.3).
+
+    The brackets of `urls[]` must reach the device **literally**. Percent-encoding
+    the parameter *name* — which is what a normal query builder does, producing
+    `urls%5B%5D` — leaves the firmware with a parameter it does not recognise: it
+    applies `enabled` and silently ignores the URLs, so a slot could be switched
+    on and off but never edited or cleared. Values are still encoded, because a
+    URL carries `?` and `&` of its own.
+    """
+    parts = [
+        f"index={idx}",
+        f"name={quote(native_key, safe='')}",
+        f"enabled={'true' if enabled else 'false'}",
+    ]
+    # A single empty `urls[]` clears the slot.
+    parts.extend(f"urls[]={quote(url, safe='')}" for url in urls) if urls else parts.append("urls[]=")
+    return "&".join(parts)
+
+
 async def write_slot(
     client: httpx.AsyncClient,
     ip: str,
@@ -148,19 +169,11 @@ async def write_slot(
     urls: list[str],
     auth: httpx.Auth | None = None,
 ) -> None:
-    """Write one action slot (SPEC §5.3).
-
-    Gen1 takes writes as GET query params:
-    `/settings/actions?index={i}&name={key}&enabled=true|false&urls[]=…`
-    with one `urls[]` per URL, and a single empty one to clear the slot.
-    """
-    params: list[tuple[str, str]] = [
-        ("index", str(idx)),
-        ("name", native_key),
-        ("enabled", "true" if enabled else "false"),
-    ]
-    params.extend(("urls[]", url) for url in urls) if urls else params.append(("urls[]", ""))
-    response = await client.get(f"http://{ip}/settings/actions", params=params, auth=auth)
+    """Write one action slot: `/settings/actions?index=&name=&enabled=&urls[]=…`."""
+    url = httpx.URL(f"http://{ip}/settings/actions").copy_with(
+        query=action_query(native_key, idx, enabled, urls).encode()
+    )
+    response = await client.get(url, auth=auth)
     response.raise_for_status()
 
 

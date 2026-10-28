@@ -7,9 +7,11 @@ type Props = {
   node: GraphNode;
   onClose: () => void;
   onChanged: () => void;
+  /** Open the slot editor on one of this device's action slots (SPEC §5.4). */
+  onEditSlot: (slotId: string) => void;
 };
 
-export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
+export default function DeviceDrawer({ node, onClose, onChanged, onEditSlot }: Props) {
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState('admin');
@@ -179,25 +181,33 @@ export default function DeviceDrawer({ node, onClose, onChanged }: Props) {
 
           <div className="section">
             <h3>Action slots ({device.slots.length})</h3>
+            <p className="muted small">Click a slot to add, change or remove its URLs.</p>
             <ul className="list slots">
               {device.slots.map((slot) => (
-                <li key={slot.id} className={slot.enabled ? '' : 'muted'}>
-                  <div className="slot-head">
-                    <strong>{slot.label}</strong>
-                    <span className={`tag ${slot.enabled ? 'tag-ok' : 'tag-disabled'}`}>
-                      {slot.enabled ? 'enabled' : 'disabled'}
-                    </span>
-                  </div>
-                  <div className="mono small">{slot.native_key}</div>
-                  {slot.urls.length === 0 ? (
-                    <div className="muted small">no URLs</div>
-                  ) : (
-                    slot.urls.map((url) => (
-                      <code className="raw" key={url.id}>
-                        {url.raw_url}
-                      </code>
-                    ))
-                  )}
+                <li key={slot.id}>
+                  <button
+                    type="button"
+                    className={`slot-button ${slot.enabled ? '' : 'muted'}`}
+                    onClick={() => onEditSlot(slot.id)}
+                    title="Edit this action"
+                  >
+                    <div className="slot-head">
+                      <strong>{slot.label}</strong>
+                      <span className={`tag ${slot.enabled ? 'tag-ok' : 'tag-disabled'}`}>
+                        {slot.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                    </div>
+                    <div className="mono small">{slot.native_key}</div>
+                    {slot.urls.length === 0 ? (
+                      <div className="muted small">no URLs</div>
+                    ) : (
+                      slot.urls.map((url) => (
+                        <code className="raw" key={url.id}>
+                          {url.raw_url}
+                        </code>
+                      ))
+                    )}
+                  </button>
                 </li>
               ))}
             </ul>

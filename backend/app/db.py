@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, AsyncIterator, Iterable, Sequence
 
 import aiosqlite
 
@@ -156,6 +157,23 @@ class Database:
         async with self._lock:
             await self.conn.executemany(sql, rows)
             await self.conn.commit()
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Several statements as one unit, with the connection lock held.
+
+        `db.execute()` takes the lock per statement, so a delete followed by an
+        insert can interleave with another task doing the same — which is how two
+        concurrent `rebuild_edges()` calls (a scan finishing while a slot is
+        saved) collided on `edges.id`.
+        """
+        async with self._lock:
+            try:
+                yield self.conn
+                await self.conn.commit()
+            except Exception:
+                await self.conn.rollback()
+                raise
 
     async def script(self, sql: str) -> None:
         async with self._lock:

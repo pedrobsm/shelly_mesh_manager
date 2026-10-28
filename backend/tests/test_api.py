@@ -41,7 +41,7 @@ def live_client(tmp_path, monkeypatch):
     importlib.reload(app.config)
     importlib.reload(app.main)
 
-    async def slow_scan(db, settings, method=None, scan_id=None):
+    async def slow_scan(db, settings, method=None, scan_id=None, scope="full"):
         await asyncio.sleep(0.4)
         return {"scan_id": scan_id, "status": "done", "found": 0, "errors": []}
 
@@ -120,7 +120,7 @@ def test_rescan_unknown_device_is_404(client):
 
 
 def test_rescan_during_a_full_scan_is_409(client, monkeypatch):
-    async def slow_scan(db, settings, method=None, scan_id=None):
+    async def slow_scan(db, settings, method=None, scan_id=None, scope="full"):
         await asyncio.sleep(0.5)
         return {"scan_id": scan_id, "status": "done", "found": 0, "errors": []}
 
@@ -149,7 +149,7 @@ def test_boot_scan_records_exactly_one_run(live_client, tmp_path):
         time.sleep(0.01)
     assert codes == {409}
 
-    connection = sqlite3.connect(tmp_path / "mesh.db")
+    connection = sqlite3.connect(tmp_path / "mesh.db", timeout=10)
     try:
         rows = connection.execute("SELECT id FROM scan_runs").fetchall()
     finally:
@@ -158,7 +158,7 @@ def test_boot_scan_records_exactly_one_run(live_client, tmp_path):
 
 
 def test_second_scan_while_one_runs_is_409(client, app_module, monkeypatch):
-    async def slow_scan(db, settings, method=None, scan_id=None):
+    async def slow_scan(db, settings, method=None, scan_id=None, scope="full"):
         await asyncio.sleep(0.5)
         return {"scan_id": scan_id, "status": "done", "found": 0, "errors": []}
 
@@ -326,3 +326,96 @@ def test_demo_ids_and_layout_survive_a_restart(app_module, tmp_path):
         assert node["position"] == {"x": 11.0, "y": 22.0}
         snapshots = client.get("/api/devices/shelly25-livingroom").json()["snapshot_count"]
         assert snapshots == 1
+
+
+# --- the two scan buttons ------------------------------------------------------
+
+
+def start_scan(client, **params) -> str:
+    """Start a scan once the boot scan has let go of the manager."""
+    for _ in range(100):
+        response = client.post("/api/scan", params=params)
+        if response.status_code == 202:
+            return response.json()["scan_id"]
+        time.sleep(0.02)
+    raise AssertionError(f"could not start a scan: {response.status_code} {response.text}")
+
+
+def wait_for(client, scan_id: str) -> dict:
+    for _ in range(100):
+        state = client.get(f"/api/scan/{scan_id}").json()
+        if state["status"] != "running":
+            return state
+        time.sleep(0.02)
+    raise AssertionError("the scan never finished")
+
+
+@pytest.fixture
+def scanning_client(tmp_path, monkeypatch):
+    """A non-demo app running the real run_scan, with discovery and probing stubbed."""
+    monkeypatch.setenv("DEMO_MODE", "false")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SCAN_INTERVAL_MIN", "0")
+    import app.config
+    import app.discovery
+    import app.main
+
+    importlib.reload(app.config)
+    importlib.reload(app.main)
+
+    probed: list[list[str]] = []
+
+    async def no_mdns(seconds: float = 0):
+        return []
+
+    async def record(db, settings, ips):
+        probed.append(list(ips))
+        return [], []
+
+    monkeypatch.setattr(app.discovery.mdns, "browse", no_mdns)
+    monkeypatch.setattr(app.discovery, "scan_targets", record)
+    with TestClient(app.main.app) as test_client:
+        test_client.probed = probed  # type: ignore[attr-defined]
+        yield test_client
+
+
+def test_a_known_scan_probes_only_the_devices_already_found(scanning_client, tmp_path):
+    """"Scan" re-reads the inventory; "Full Scan" goes looking for more."""
+    connection = sqlite3.connect(tmp_path / "mesh.db", timeout=10)
+    connection.execute(
+        """
+        INSERT INTO devices (id, ip, gen, model, online, first_seen, last_seen)
+        VALUES ('a', '192.168.1.10', 1, 'SHSW-25', 1, 'now', 'now'),
+               ('b', '192.168.1.11', 2, 'SNSW-001X16EU', 1, 'now', 'now'),
+               ('gone', 'unassigned:gone', 1, 'SHSW-1', 0, 'now', 'now')
+        """
+    )
+    connection.commit()
+    connection.close()
+    scanning_client.probed.clear()
+
+    state = wait_for(scanning_client, start_scan(scanning_client, scope="known"))
+    assert state["method"] == "known"
+    # Only the two real addresses; the parked placeholder is not an address.
+    assert scanning_client.probed == [["192.168.1.10", "192.168.1.11"]]
+
+
+def test_a_full_scan_still_discovers(scanning_client):
+    scanning_client.probed.clear()
+    state = wait_for(scanning_client, start_scan(scanning_client, scope="full"))
+    assert state["method"] in {"mdns", "range"}
+
+
+def test_a_known_scan_with_nothing_known_says_so(scanning_client):
+    state = wait_for(scanning_client, start_scan(scanning_client, scope="known"))
+    assert state["status"] == "error"
+    assert "run a full scan first" in state["errors"][0]
+
+
+def test_an_unknown_scope_is_rejected(scanning_client):
+    for _ in range(100):  # past the boot scan
+        response = scanning_client.post("/api/scan", params={"scope": "sideways"})
+        if response.status_code != 409:
+            break
+        time.sleep(0.02)
+    assert response.status_code == 422

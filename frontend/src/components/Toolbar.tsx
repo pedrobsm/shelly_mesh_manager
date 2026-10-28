@@ -7,7 +7,7 @@ type Props = {
   counts: { dangling: number; unparsed: number };
   options: ViewOptions;
   onOptions: (next: Partial<ViewOptions>) => void;
-  onScan: () => void;
+  onScan: (scope: 'full' | 'known') => void;
   onRelayout: () => void;
   scanning: boolean;
   status: string | null;
@@ -31,8 +31,21 @@ export default function Toolbar({
         {demo && <span className="pill pill-demo">demo</span>}
       </div>
 
-      <button className="button primary" onClick={onScan} disabled={scanning}>
-        {scanning ? 'Scanning…' : 'Scan'}
+      <button
+        className="button primary"
+        onClick={() => onScan('full')}
+        disabled={scanning}
+        title="Look for devices on the network, then read them all"
+      >
+        {scanning ? 'Scanning…' : 'Full Scan'}
+      </button>
+      <button
+        className="button"
+        onClick={() => onScan('known')}
+        disabled={scanning || deviceCount === 0}
+        title="Re-read the devices already found, without looking for new ones"
+      >
+        Scan
       </button>
       <button className="button" onClick={onRelayout}>
         Re-layout

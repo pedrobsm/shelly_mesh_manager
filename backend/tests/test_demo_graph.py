@@ -174,3 +174,17 @@ async def test_one_ghost_node_per_host_whatever_the_query(tmp_path):
         "dim up · 25%",
         "toggle",
     ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rebuilds_do_not_collide(tmp_path):
+    """A scan finishing while a slot is saved: both rebuild the edge cache."""
+    import asyncio
+
+    db = Database(tmp_path / "mesh.db")
+    await db.connect()
+    await seed_demo(db)
+    await asyncio.gather(*(rebuild_edges(db) for _ in range(8)))
+    rows = await db.fetchall("SELECT id FROM edges")
+    await db.close()
+    assert len(rows) == 7  # the fixture's edges, once each

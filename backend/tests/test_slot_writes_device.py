@@ -45,6 +45,9 @@ class FakeDevice:
         query = dict(parse_qsl(request.url.query.decode()))
 
         if path == "/settings/actions":
+            # A device that only understands a literal `urls[]`, as Gen1 does.
+            if "urls%5B%5D" in request.url.query.decode():
+                return httpx.Response(200, json={})
             if "name" in query:  # a write
                 if self.echo:
                     urls = [
@@ -112,7 +115,7 @@ def client(tmp_path, monkeypatch, device):
     from app.demo_fixtures import seed_demo
     from app.graph import rebuild_edges
 
-    async def seeding_scan(db, settings, method=None, scan_id=None):
+    async def seeding_scan(db, settings, method=None, scan_id=None, scope="full"):
         await seed_demo(db)
         await rebuild_edges(db)
         return {"scan_id": scan_id, "status": "done", "found": 6, "errors": []}
@@ -139,7 +142,7 @@ def client(tmp_path, monkeypatch, device):
 def audit(tmp_path) -> list[tuple[str, str]]:
     import sqlite3
 
-    connection = sqlite3.connect(tmp_path / "mesh.db")
+    connection = sqlite3.connect(tmp_path / "mesh.db", timeout=10)
     try:
         return connection.execute("SELECT action, result FROM audit_log ORDER BY rowid").fetchall()
     finally:
@@ -147,6 +150,22 @@ def audit(tmp_path) -> list[tuple[str, str]]:
 
 
 # --- Gen1 ---------------------------------------------------------------------
+
+
+def test_the_url_brackets_reach_the_device_literally():
+    """`urls%5B%5D` is a parameter Gen1 does not know, so only `enabled` applied."""
+    from app.adapters.gen1 import action_query
+
+    query = action_query("btn_on_url", 0, True, ["http://192.168.1.11/relay/0?turn=on&timer=30"])
+    sent = httpx.Request(
+        "GET", httpx.URL("http://d/settings/actions").copy_with(query=query.encode())
+    ).url.raw_path.decode()
+
+    assert "urls[]=" in sent
+    assert "urls%5B%5D" not in sent
+    # The value is still encoded, or its own ? and & would read as more params.
+    assert "turn%3Don%26timer%3D30" in sent
+    assert action_query("btn_on_url", 1, False, []).endswith("enabled=false&urls[]=")
 
 
 def test_gen1_write_uses_the_documented_query_shape(client, device, tmp_path):
@@ -226,7 +245,7 @@ def test_gen2_delete_removes_the_hook_from_the_device(client, device, tmp_path):
 def test_an_offline_device_cannot_be_edited(client, device, tmp_path):
     import sqlite3
 
-    connection = sqlite3.connect(tmp_path / "mesh.db")
+    connection = sqlite3.connect(tmp_path / "mesh.db", timeout=10)
     connection.execute("UPDATE devices SET online = 0 WHERE id = 'shelly25-livingroom'")
     connection.commit()
     connection.close()

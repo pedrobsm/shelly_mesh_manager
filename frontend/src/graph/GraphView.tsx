@@ -398,7 +398,13 @@ function runLayout(cy: cytoscape.Core, persist: boolean): void {
  * the node's image, so the hit test is done here against the row geometry the
  * renderer used (SPEC §5.4: clicking an output port opens the slot editor).
  */
-function slotAt(node: cytoscape.NodeSingular, position: cytoscape.Position): string | null {
+function slotAt(
+  node: cytoscape.NodeSingular,
+  position: cytoscape.Position | undefined,
+): string | null {
+  // A synthetic tap (`node.emit('tap')`, used by the end-to-end checks) carries no
+  // position, which means "the node itself" rather than one of its port rows.
+  if (!position) return null;
   const rows = node.data('outRows') as { id: string; y: number }[] | undefined;
   if (!rows?.length) return null;
   const width = node.data('w') as number;

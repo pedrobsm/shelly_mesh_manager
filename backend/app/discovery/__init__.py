@@ -449,17 +449,44 @@ async def scan_targets(
     return device_ids, errors
 
 
-def scan_method(settings: Settings) -> str:
+#: A full scan discovers; a known scan only re-reads the devices already found.
+SCOPES = ("full", "known")
+
+
+def scan_method(settings: Settings, scope: str = "full") -> str:
     if settings.demo_mode:
         return "demo"
+    if scope == "known":
+        return "known"
     return "range" if settings.scan_subnet else "mdns"
 
 
+async def known_addresses(db: Database) -> list[str]:
+    """The addresses of devices already in the inventory, placeholders aside."""
+    rows = await db.fetchall(
+        """
+        SELECT ip FROM devices
+        WHERE ip NOT LIKE 'unassigned:%' AND ip NOT LIKE 'migrating:%'
+        ORDER BY ip
+        """
+    )
+    return [row["ip"] for row in rows]
+
+
 async def run_scan(
-    db: Database, settings: Settings, method: str | None = None, scan_id: str | None = None
+    db: Database,
+    settings: Settings,
+    method: str | None = None,
+    scan_id: str | None = None,
+    scope: str = "full",
 ) -> dict[str, Any]:
-    """A full scan: discover, inventory, mark absentees offline, rebuild edges."""
-    method = method or scan_method(settings)
+    """Discover (or not), inventory, mark absentees offline, rebuild edges.
+
+    `scope="known"` skips discovery and re-reads only the devices already in the
+    inventory — the quick refresh after changing something on a device, where a
+    full scan would spend most of its time on addresses nobody lives at.
+    """
+    method = method or scan_method(settings, scope)
     if scan_id is None:
         scan_id = str(uuid.uuid4())
         await db.execute(
@@ -475,11 +502,26 @@ async def run_scan(
 
             device_ids = await seed_demo(db)
         else:
-            candidates = mdns.merge_candidates(
-                await mdns.browse(), range_scan.expand(settings.scan_subnet)
-            )
-            if not candidates:
-                errors.append("no candidates found (mDNS returned nothing, SCAN_SUBNET empty)")
+            if scope == "known":
+                candidates = await known_addresses(db)
+                if not candidates:
+                    errors.append("no devices are known yet — run a full scan first")
+            else:
+                candidates = mdns.merge_candidates(
+                    await mdns.browse(), range_scan.expand(settings.scan_subnet)
+                )
+                if not candidates:
+                    errors.append("no candidates found (mDNS returned nothing, SCAN_SUBNET empty)")
+
+            if not candidates and scope == "known":
+                # Nothing was probed, so nothing may be concluded about anyone.
+                await rebuild_edges(db)
+                await db.execute(
+                    "UPDATE scan_runs SET ended_at = ?, found = 0, errors = ? WHERE id = ?",
+                    (now_iso(), json.dumps(errors), scan_id),
+                )
+                return {"scan_id": scan_id, "status": "error", "found": 0, "errors": errors}
+
             device_ids, errors_found = await scan_targets(db, settings, candidates)
             errors.extend(errors_found)
             if device_ids:
@@ -538,21 +580,23 @@ class ScanManager:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def start(self) -> str:
+    async def start(self, scope: str = "full") -> str:
         if self.running:
             raise RuntimeError("a scan is already running")
+        if scope not in SCOPES:
+            raise ValueError(f"unknown scan scope {scope!r}")
         scan_id = str(uuid.uuid4())
         await self.db.execute(
             "INSERT INTO scan_runs (id, started_at, method, found, errors) VALUES (?, ?, ?, 0, ?)",
-            (scan_id, now_iso(), scan_method(self.settings), json.dumps([])),
+            (scan_id, now_iso(), scan_method(self.settings, scope), json.dumps([])),
         )
         self.current_id = scan_id
-        self._task = asyncio.create_task(self._run(scan_id))
+        self._task = asyncio.create_task(self._run(scan_id, scope))
         return scan_id
 
-    async def _run(self, scan_id: str) -> None:
+    async def _run(self, scan_id: str, scope: str = "full") -> None:
         try:
-            await run_scan(self.db, self.settings, scan_id=scan_id)
+            await run_scan(self.db, self.settings, scan_id=scan_id, scope=scope)
         except asyncio.CancelledError:
             # Best effort: the startup reconciliation closes the row if this
             # write does not land either (#29).

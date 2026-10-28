@@ -210,7 +210,8 @@ export const api = {
   graph: () => request<Graph>('graph'),
   devices: () => request<Device[]>('devices'),
   device: (id: string) => request<DeviceDetail>(`devices/${encodeURIComponent(id)}`),
-  startScan: () => request<{ scan_id: string }>('scan', { method: 'POST' }),
+  startScan: (scope: 'full' | 'known' = 'full') =>
+    request<{ scan_id: string }>(`scan?scope=${scope}`, { method: 'POST' }),
   scanStatus: (id: string) => request<ScanStatus>(`scan/${encodeURIComponent(id)}`),
   saveLayout: (entries: { node_id: string; x: number; y: number }[]) =>
     request<{ ok: boolean }>('layout', { method: 'PUT', body: JSON.stringify(entries) }),
