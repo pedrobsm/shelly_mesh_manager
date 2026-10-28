@@ -120,6 +120,11 @@ Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-d
 bugs #11/#12/#13 and added result comments to #2/#3/#5/#6/#7/#10; #1/#8/#9 are closed as
 verified. Full write-up in `docs/PHASE1-REALLAN.md`.
 
+Phase 2 Definition-of-Done checkboxes are #19–#25 (`definition-of-done`, `phase-2`), plus the
+spec gaps #26 and #33. The 2026-10-28 round of use filed #35 (second scan button), #36 (edit a
+slot from the drawer), #37 (saved action drew no line) and #38 (Gen1 edit/delete ignored);
+#35–#37 are closed, #38 waits on hardware. #39 is the one open decision from that round.
+
 ## Manual work handed over
 
 - [x] **Create the milestone *Phase 1 — discovery, inventory, graph* and attach #1–#10.** Done.
@@ -161,3 +166,12 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
       #30 (external edges to one webhook all read `/webhook`, label decision).
 - [x] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): now
       `/white/3` on the RGBW2 and resolves `ok`. Verified 2026-10-27.
+- [ ] **Confirm the Gen1 write fix (#38) on real hardware** — on a Gen1 device: add a URL,
+      change it, then delete it, each time checking the device's own web UI. The bug was that
+      the firmware answered 200 and ignored `urls%5B%5D`, so only enable/disable worked; the
+      fix sends the brackets literally and is covered by tests, but only hardware proves it.
+      Part of the #21 hardware pass.
+- [ ] **Decide on #39** — saving a slot re-emits every parsed row through `generator.py`, so a
+      legacy URL aimed at a Gen2 device (`/relay/0?turn=on`) is rewritten to its native form
+      (`/rpc/Switch.Set?id=0&on=true`) even when the user only toggled `enabled`. Harmless but
+      surprising, and visible in the device's own UI. Three options in the issue.
