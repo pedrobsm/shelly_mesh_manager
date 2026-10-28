@@ -4,6 +4,7 @@ import { api } from './api';
 import type { Device, Graph, GraphEdge, GraphNode } from './api';
 import GraphView, { type ViewOptions } from './graph/GraphView';
 import DeviceDrawer from './components/DeviceDrawer';
+import SlotEditor from './components/SlotEditor';
 import EdgePopover from './components/EdgePopover';
 import Toolbar from './components/Toolbar';
 
@@ -39,6 +40,7 @@ export default function App() {
   const [options, setOptions] = useState<ViewOptions>(loadOptions);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
+  const [editingSlot, setEditingSlot] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
@@ -66,17 +68,21 @@ export default function App() {
     refresh().catch((exc: Error) => setStatus(exc.message));
   }, [refresh]);
 
-  const runScan = useCallback(async () => {
+  const runScan = useCallback(async (scope: 'full' | 'known') => {
     setScanning(true);
-    setStatus('Scan started…');
+    setStatus(scope === 'full' ? 'Full scan started…' : 'Re-reading known devices…');
     try {
-      const { scan_id: scanId } = await api.startScan();
+      const { scan_id: scanId } = await api.startScan(scope);
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         const state = await api.scanStatus(scanId);
         if (state.status === 'running') {
           setStatus(`Scanning (${state.method})…`);
           continue;
+        }
+        if (state.status === 'error' && state.errors.length) {
+          setStatus(state.errors[0]);
+          break;
         }
         setStatus(
           `${state.status === 'error' ? 'Scan failed' : 'Scan done'} · ${state.found} devices` +
@@ -126,14 +132,36 @@ export default function App() {
           devices={devices}
           options={options}
           relayoutToken={relayoutToken}
-          onNodeClick={setSelectedNode}
+          onNodeClick={(node) => {
+            setSelectedNode(node);
+            setEditingSlot(null);
+          }}
           onEdgeClick={setSelectedEdge}
+          onPortClick={(slotId) => {
+            setEditingSlot(slotId);
+            setSelectedNode(null);
+          }}
         />
+        {editingSlot && (
+          <SlotEditor
+            slotId={editingSlot}
+            devices={devices}
+            demo={demo}
+            showInactive={options.showInactive}
+            onShowInactive={() => setOptions((current) => ({ ...current, showInactive: true }))}
+            onClose={() => setEditingSlot(null)}
+            onSaved={() => void refresh()}
+          />
+        )}
         {selectedNode && (
           <DeviceDrawer
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
             onChanged={() => void refresh()}
+            onEditSlot={(slotId) => {
+              setEditingSlot(slotId);
+              setSelectedNode(null);
+            }}
           />
         )}
         {selectedEdge && (

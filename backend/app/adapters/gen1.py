@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from .base import (
+    DeviceError,
     DeviceInventory,
     InventoryChannel,
     InventorySlot,
@@ -136,3 +138,60 @@ async def inventory(
         slots=slots_from_actions(device_id, actions),
         config={"settings": settings, "actions": actions},
     )
+
+
+def action_query(native_key: str, idx: int, enabled: bool, urls: list[str]) -> str:
+    """The query string of a Gen1 action write (SPEC §5.3).
+
+    The brackets of `urls[]` must reach the device **literally**. Percent-encoding
+    the parameter *name* — which is what a normal query builder does, producing
+    `urls%5B%5D` — leaves the firmware with a parameter it does not recognise: it
+    applies `enabled` and silently ignores the URLs, so a slot could be switched
+    on and off but never edited or cleared. Values are still encoded, because a
+    URL carries `?` and `&` of its own.
+    """
+    parts = [
+        f"index={idx}",
+        f"name={quote(native_key, safe='')}",
+        f"enabled={'true' if enabled else 'false'}",
+    ]
+    # A single empty `urls[]` clears the slot.
+    parts.extend(f"urls[]={quote(url, safe='')}" for url in urls) if urls else parts.append("urls[]=")
+    return "&".join(parts)
+
+
+async def write_slot(
+    client: httpx.AsyncClient,
+    ip: str,
+    native_key: str,
+    idx: int,
+    enabled: bool,
+    urls: list[str],
+    auth: httpx.Auth | None = None,
+) -> None:
+    """Write one action slot: `/settings/actions?index=&name=&enabled=&urls[]=…`."""
+    url = httpx.URL(f"http://{ip}/settings/actions").copy_with(
+        query=action_query(native_key, idx, enabled, urls).encode()
+    )
+    response = await client.get(url, auth=auth)
+    response.raise_for_status()
+
+
+async def read_slot(
+    client: httpx.AsyncClient,
+    ip: str,
+    native_key: str,
+    idx: int,
+    auth: httpx.Auth | None = None,
+) -> tuple[bool, list[str]]:
+    """Re-read one slot for the mandatory verify-after-write."""
+    response = await client.get(f"http://{ip}/settings/actions", auth=auth)
+    response.raise_for_status()
+    actions = (response.json() or {}).get("actions") or {}
+    for position, entry in enumerate(actions.get(native_key) or []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("index", position) == idx:
+            urls = [str(url) for url in (entry.get("urls") or []) if str(url).strip()]
+            return bool(entry.get("enabled", False)), urls
+    raise DeviceError(f"the device no longer reports an action slot {native_key}[{idx}]")

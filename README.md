@@ -107,6 +107,13 @@ do not expose the port to an untrusted network.
 - **Re-scan one device** — selecting a node opens its drawer, which has a
   *Re-scan device* button: it re-reads just that device and rebuilds the edges,
   instead of waiting for a scan of the whole network.
+- **Two scan buttons** — *Full Scan* discovers devices (mDNS, or the range scan
+  when `SCAN_SUBNET` is set) and then reads everything it finds; *Scan* skips
+  discovery and re-reads only the devices already in the inventory, which is much
+  faster on a large subnet. It is disabled until a full scan has found something.
+- **Editing an action from the drawer** — the action rows in a device's drawer are
+  clickable: each one opens the slot editor for that slot, so adding, changing or
+  removing a URL does not depend on hitting the small port marker on the node.
 
 The view toggles are remembered per browser in `localStorage`; the server keeps
 only the node positions.
@@ -119,7 +126,8 @@ Phase 1 (read-only):
 
 ```
 GET  /api/health                      → {status, version, demo}
-POST /api/scan                        → {scan_id}   (409 while a scan runs)
+POST /api/scan?scope=full|known       → {scan_id}   (409 while a scan runs)
+                                        full (default) discovers; known re-reads the inventory only
 GET  /api/scan/{id}                   → {status, found, errors[]}
 GET  /api/devices                     → Device[] (channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info
@@ -129,16 +137,32 @@ GET  /api/graph                       → Graph {nodes, edges}
 PUT  /api/layout                      → {ok}; body [{node_id, x, y}]
 ```
 
-Phase 2, in progress — the read-only half of the guided action builder (§5.1).
-The server generates every Shelly-target URL; the client never composes one:
+Phase 2, in progress — the guided action builder (§5.1). The server generates
+every Shelly-target URL; the client never composes one:
 
 ```
 GET  /api/slots/{slot_id}             → slot detail, each URL with its parse result
+PUT  /api/slots/{slot_id}             → writes the slot to its device, verifies, returns it
+                                        body {enabled, urls: UrlSpec[], expect_revision?,
+                                              confirm_delete?}
 POST /api/url/build                   → {url, command, params, summary}
                                         body {target_device_id, channel_id, command, params}
 POST /api/url/parse                   → the resolver's reading of one raw URL
+POST /api/url/test                    → {status_code, elapsed_ms, body_snippet}; fires the URL
 GET/PUT /api/settings                 → {ha_base_url}
 ```
+
+A `UrlSpec` is `{kind: 'built', target_device_id, channel_id, command, params}`,
+`{kind: 'ha_webhook', webhook_id}` or `{kind: 'raw_external', url}`. The last is
+refused when its host is an inventoried device: Shelly-target URLs are built by
+the server, and that rule is enforced at the API, not only in the form.
+
+**Writes are verified.** Every slot write is followed by a re-read of the device
+and a field-by-field comparison; a mismatch is an error carrying both states,
+never a quiet success. One write at a time per device, offline devices are
+refused, and every attempt — including the failures — lands in `audit_log`. In
+demo mode writes change the fixture database only and are recorded as
+`simulated`.
 
 Each channel in `GET /api/devices` carries the commands the builder can emit for
 it, with their parameters, so the form can only offer what the generator

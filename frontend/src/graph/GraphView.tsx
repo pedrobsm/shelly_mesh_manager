@@ -4,7 +4,7 @@ import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import type { Device, Graph, GraphEdge, GraphNode } from '../api';
 import { api } from '../api';
-import { geometryFor, renderNode } from './nodeRenderer';
+import { ROW_H, geometryFor, renderNode, visibleOutputs } from './nodeRenderer';
 import { stylesheet } from './styles';
 
 cytoscape.use(dagre);
@@ -42,6 +42,8 @@ type Props = {
   relayoutToken: number;
   onNodeClick: (node: GraphNode | null) => void;
   onEdgeClick: (edge: GraphEdge | null) => void;
+  /** An action-slot port was clicked — §5.4 opens the slot editor on it. */
+  onPortClick: (slotId: string) => void;
 };
 
 const LAYOUT = {
@@ -124,6 +126,11 @@ function buildElements(
         img: image,
         type: node.type,
         label: node.label,
+        // Port rows, so a tap inside the card can be mapped back to its slot.
+        outRows: visibleOutputs(node, options.showInactive).map((port) => ({
+          id: port.id,
+          y: geom.portY[port.id],
+        })),
       },
       position: node.position ? { ...node.position } : undefined,
       classes: matchesSearch(node, devices[node.id], options.search) ? '' : 'dimmed',
@@ -256,6 +263,7 @@ export default function GraphView({
   relayoutToken,
   onNodeClick,
   onEdgeClick,
+  onPortClick,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -264,6 +272,10 @@ export default function GraphView({
   // The Cytoscape handlers are registered once, so they read the live options here.
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  // The Cytoscape handlers are registered once, so they call through here
+  // rather than closing over the props of the render that created them.
+  const handlers = useRef({ onNodeClick, onEdgeClick, onPortClick });
+  handlers.current = { onNodeClick, onEdgeClick, onPortClick };
 
   useEffect(() => {
     if (!container.current || cyRef.current) return;
@@ -279,22 +291,30 @@ export default function GraphView({
     (window as unknown as { __cy?: cytoscape.Core }).__cy = cy;
 
     cy.on('tap', 'node', (event) => {
-      const id = event.target.id();
+      const target = event.target;
+      const id = target.id();
+      const slotId = slotAt(target, event.position);
+      if (slotId) {
+        handlers.current.onPortClick(slotId);
+        handlers.current.onEdgeClick(null);
+        highlightChain(cy, id);
+        return;
+      }
       const node = graphRef.current.nodes.find((candidate) => candidate.id === id) ?? null;
-      onNodeClick(node);
-      onEdgeClick(null);
+      handlers.current.onNodeClick(node);
+      handlers.current.onEdgeClick(null);
       highlightChain(cy, id);
     });
     cy.on('tap', 'edge', (event) => {
       const id = event.target.id();
       const edge = graphRef.current.edges.find((candidate) => candidate.id === id) ?? null;
-      onEdgeClick(edge);
-      onNodeClick(null);
+      handlers.current.onEdgeClick(edge);
+      handlers.current.onNodeClick(null);
     });
     cy.on('tap', (event) => {
       if (event.target === cy) {
-        onNodeClick(null);
-        onEdgeClick(null);
+        handlers.current.onNodeClick(null);
+        handlers.current.onEdgeClick(null);
         cy.elements().removeClass('faded chain');
       }
     });
@@ -315,7 +335,7 @@ export default function GraphView({
       cy.destroy();
       cyRef.current = null;
     };
-  }, [onNodeClick, onEdgeClick]);
+  }, []);
 
   // Rebuild elements whenever the graph or the view toggles change.
   useEffect(() => {
@@ -371,6 +391,29 @@ function runLayout(cy: cytoscape.Core, persist: boolean): void {
     if (entries.length > 0) void api.saveLayout(entries).catch(() => undefined);
   });
   layout.run();
+}
+
+/**
+ * Which action-slot port, if any, a click landed on. The ports are painted into
+ * the node's image, so the hit test is done here against the row geometry the
+ * renderer used (SPEC §5.4: clicking an output port opens the slot editor).
+ */
+function slotAt(
+  node: cytoscape.NodeSingular,
+  position: cytoscape.Position | undefined,
+): string | null {
+  // A synthetic tap (`node.emit('tap')`, used by the end-to-end checks) carries no
+  // position, which means "the node itself" rather than one of its port rows.
+  if (!position) return null;
+  const rows = node.data('outRows') as { id: string; y: number }[] | undefined;
+  if (!rows?.length) return null;
+  const width = node.data('w') as number;
+  const height = node.data('h') as number;
+  const localX = position.x - (node.position('x') - width / 2);
+  const localY = position.y - (node.position('y') - height / 2);
+  if (localX < width * 0.5) return null; // the right-hand side holds the outputs
+  const hit = rows.find((row) => Math.abs(row.y - localY) <= ROW_H / 2);
+  return hit?.id ?? null;
 }
 
 /** Select a node -> highlight its full upstream/downstream chain (SPEC §1.4). */

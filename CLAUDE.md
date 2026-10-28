@@ -6,11 +6,12 @@ Keep this file updated.
 
 **Phase 1 (read-only) is merged to `main`** (PR #16, PR #18). The 2026-10-27 real-LAN pass
 (PR #31, docs) filed #27–#30; all four are fixed on the current branch.
-**Phase 2 has started.** Done so far: the §3.5 table completed (dimmer rows, Gen1 roller
-go-to-position, `Light.Toggle`), `generator.py` with the §5.2 roundtrip suite, and the
-read-only half of §5.1 (`GET /api/slots/{id}`, `POST /api/url/build|parse`, `GET/PUT
-/api/settings`). Not written yet: the device write path (§5.3), the slot editor UI (§5.4) and
-demo-mode simulated writes (§5.5).
+**Phase 2 is in progress.** Done: the §3.5 table completed, `generator.py` + the §5.2
+roundtrip suite, all of §5.1 (`GET/PUT /api/slots/{id}`, `POST /api/url/build|parse|test`,
+`GET/PUT /api/settings`), the §5.3 write adapters with verify-after-write, per-device locking
+and the audit log, §5.5 simulated writes, and the §5.4 slot editor. What is left for §5.6: the
+hardware pass (#21). The 2026-10-28 round added the two scan buttons, slot editing from the
+device drawer, and fixed the Gen1 action write (#35–#38).
 
 ### Layout
 ```
@@ -47,6 +48,38 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 - View toggles (routing, labels, save-positions, the two visibility switches) live in
   `localStorage` under `shelly-mesh-manager.view-options`; only node positions go to the server.
   Cytoscape handlers are registered once, so they read the live values through `optionsRef`.
+- `slots.py` owns every write: it resolves `UrlSpec`s (refusing a raw URL aimed at an
+  inventoried device), takes the per-device lock, writes through the adapter, re-reads the
+  device and compares field by field, then mirrors the result locally and rebuilds the edges.
+  A write is never reported as a success on the strength of a 200 alone.
+- `SlotDetail.revision` is a hash of the stored slot; the editor sends it back as
+  `expect_revision` so a re-scan in the meantime is caught rather than overwritten.
+- A `raw_external` URL aimed at an inventoried device is refused — unless it is already stored
+  on that slot, which lets the editor keep an unparsed URL it cannot rebuild without letting
+  the client compose a new Shelly URL.
+- Gen2/3 inventory synthesizes an empty slot per supported event × component with no hook
+  (`gen2.synthetic_slots`, id `…:newhook:{event}:{cid}`), which is how the first action on a
+  Plus/Gen3 device gets added (#33). Writing one calls `Webhook.Create` and the slot is re-keyed
+  to `…:hook:{id}` with the id the device chose, so use `gen2.hook_id_of()` rather than parsing
+  the slot id by hand.
+- Gen1 action writes hand-build their query string (`gen1.action_query()`): the `urls[]` brackets
+  must reach the firmware literally. A normal query builder percent-encodes the parameter *name*
+  to `urls%5B%5D`, which the firmware answers 200 to while applying only `enabled` — so a slot
+  could be switched on and off but never edited or cleared (#38).
+- `POST /api/scan?scope=known` re-reads only the inventoried IPs (`discovery.known_addresses()`)
+  and never marks anything offline when the inventory is empty; it refuses with a message instead
+  (#35). Both scopes go through `ScanManager`, so the 409 still holds.
+- `Database.transaction()` is the only way to run several statements as one unit; `db.execute()`
+  takes the connection lock per statement, which let two concurrent `rebuild_edges()` calls (a
+  scan finishing while a slot is saved) collide on `edges.id`.
+- A save that leaves a slot disabled reports it in the editor with a "show inactive actions"
+  shortcut: the edges *are* created, the default view just hides them, which otherwise reads as a
+  write that did nothing (#37).
+- Ports are painted into the node's image, so Cytoscape cannot hit-test them. `slotAt()` in
+  `GraphView.tsx` maps a click back to a port row using the geometry the renderer used; that is
+  one way to open the slot editor — a synthetic `tap` carries no position, which means the node
+  itself. The other way is the slot rows in the device drawer, which are buttons (#36); the port
+  is a small target and a dense graph can make it unhittable.
 - `edges` is a derived cache: `rebuild_edges()` runs at the end of every scan, never incrementally.
 - Snapshot comparison ignores volatile fields (`adapters/base.py`): `VOLATILE_KEYS` everywhere,
   plus `VOLATILE_IN_CONTAINER` for generic names that are live readings only inside `meters[]`,
@@ -86,6 +119,11 @@ Phase 1 Definition-of-Done checkboxes are issues #1–#8 (label `definition-of-d
 #10 and the enhancement #17; all carry `phase-1`. `docs/PHASE1-ISSUES.md` indexes them. Real-LAN testing filed
 bugs #11/#12/#13 and added result comments to #2/#3/#5/#6/#7/#10; #1/#8/#9 are closed as
 verified. Full write-up in `docs/PHASE1-REALLAN.md`.
+
+Phase 2 Definition-of-Done checkboxes are #19–#25 (`definition-of-done`, `phase-2`), plus the
+spec gaps #26 and #33. The 2026-10-28 round of use filed #35 (second scan button), #36 (edit a
+slot from the drawer), #37 (saved action drew no line) and #38 (Gen1 edit/delete ignored);
+#35–#37 are closed, #38 waits on hardware. #39 is the one open decision from that round.
 
 ## Manual work handed over
 
@@ -128,3 +166,12 @@ verified. Full write-up in `docs/PHASE1-REALLAN.md`.
       #30 (external edges to one webhook all read `/webhook`, label decision).
 - [x] **Fix the dead action on device `192.168.33.32`** ("Kitchen entrance switch"): now
       `/white/3` on the RGBW2 and resolves `ok`. Verified 2026-10-27.
+- [ ] **Confirm the Gen1 write fix (#38) on real hardware** — on a Gen1 device: add a URL,
+      change it, then delete it, each time checking the device's own web UI. The bug was that
+      the firmware answered 200 and ignored `urls%5B%5D`, so only enable/disable worked; the
+      fix sends the brackets literally and is covered by tests, but only hardware proves it.
+      Part of the #21 hardware pass.
+- [ ] **Decide on #39** — saving a slot re-emits every parsed row through `generator.py`, so a
+      legacy URL aimed at a Gen2 device (`/relay/0?turn=on`) is rewritten to its native form
+      (`/rpc/Switch.Set?id=0&on=true`) even when the user only toggled `enabled`. Harmless but
+      surprising, and visible in the device's own UI. Three options in the issue.

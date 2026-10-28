@@ -211,7 +211,7 @@ Dockerfile · docker-compose.yml · Makefile · README.md
 2. For each candidate, concurrently (semaphore = 16): `GET http://{ip}/shelly` (unauthenticated on all generations).
    - Response with `"gen": 2|3` → Gen2/3 path. Response with `"type"`/`"mac"` and no `gen` → Gen1 path. Non-JSON / timeout → not a Shelly, drop.
 3. **Gen1 inventory:** `GET /settings` (device name, mode, relays/rollers, channel names) and `GET /settings/actions` (`{"actions": {"btn_on_url": [{"index":0, "urls":[...], "enabled":true}], ...}}`). Map every `*_url` key × index to an `action_slot`; map key→normalized event via a static table in `gen1.py` (e.g. `btn_on_url→btn_on`, `out_off_url→out_off`, `roller_open_url→roller_open`, `longpush_url→longpush`).
-4. **Gen2/3 inventory:** `POST /rpc` `Shelly.GetDeviceInfo`, `Shelly.GetConfig` (channels from `switch:N` / `cover:N` / `light:N` keys, profile), `Webhook.ListSupported`, `Webhook.List` (`hooks[]: {id, cid, enable, event, name, urls[]}`). Each hook = one `action_slot`; `event` like `switch.on`, `input.toggle_on`, `cover.stopped` → normalized event table in `gen2.py`.
+4. **Gen2/3 inventory:** `POST /rpc` `Shelly.GetDeviceInfo`, `Shelly.GetConfig` (channels from `switch:N` / `cover:N` / `light:N` keys, profile), `Webhook.ListSupported`, `Webhook.List` (`hooks[]: {id, cid, enable, event, name, urls[]}`). Each hook = one `action_slot`; `event` like `switch.on`, `input.toggle_on`, `cover.stopped` → normalized event table in `gen2.py`. A Gen2/3 device reports only the hooks that exist, where a Gen1 device reports every slot it has, so also create an **empty slot per supported event × component** that has no hook yet (`Webhook.ListSupported` × the `switch:N`/`input:N`/`cover:N`/`light:N` keys of `GetConfig`). They carry no URL, so §1.2 hides them until "Show inactive actions" — without them the first action on a Gen2/3 device could never be added. Writing one creates the webhook (§5.3) and the slot takes the id the device assigns.
 5. `401` responses: store device with `auth_required=1, online=1` and partial info; if credentials exist in DB, retry with Basic (Gen1) / digest (Gen2/3). UI shows a lock icon; `POST /api/devices/{id}/credentials` stores creds and triggers a single-device re-scan.
 6. Upsert by device id (IP may change); mark devices missing from a full scan as `online=0` (never auto-delete). For every fully inventoried device, store a `config_snapshot` if its config changed since the last snapshot (keep the last 10 per device). **Snapshot capture starts in Phase 1** so that a device that dies before Phase 4 ships can still be replaced from its history. Rebuild the `edges` table (3.5) at the end of every scan.
 
@@ -244,7 +244,9 @@ For each `action_urls.raw_url`:
 ### 3.6 Backend API (complete Phase 1 surface)
 ```
 GET  /api/health                      → {status, version, demo}
-POST /api/scan                        → {scan_id}   (409 if a scan is running)
+POST /api/scan?scope=full|known       → {scan_id}   (409 if a scan is running)
+     scope=full (default) discovers, then reads everything it finds;
+     scope=known skips discovery and re-reads only the inventoried devices.
 GET  /api/scan/{id}                   → {status: running|done|error, found, errors[]}
 GET  /api/devices                     → Device[] (with channels + slots + urls nested)
 GET  /api/devices/{id}                → full detail incl. raw_info
@@ -255,7 +257,7 @@ PUT  /api/layout                      → {ok} ; body {node_id, x, y}[]
 Errors: JSON `{error, detail}` with correct status codes. Log per-device failures into `scan_runs.errors`; a scan never aborts because one device misbehaves.
 
 ### 3.7 Frontend behavior (Phase 1)
-Toolbar: Scan button with progress, search box, toggles (external nodes / inactive actions), re-layout button. Graph per §1. Drawer and popover per §1.4. Dangling/unparsed counts shown as badges in the toolbar. No editing UI anywhere in Phase 1.
+Toolbar: two scan buttons with progress — *Full Scan* (`scope=full`) and *Scan* (`scope=known`, re-reads the inventory only; disabled while nothing is known) — search box, toggles (external nodes / inactive actions), re-layout button. Graph per §1. Drawer and popover per §1.4. Dangling/unparsed counts shown as badges in the toolbar. No editing UI anywhere in Phase 1.
 
 ### 3.8 Demo mode (the "runs at first try" guarantee)
 `DEMO_MODE=true` seeds the DB from `demo_fixtures.py` and disables all network I/O. Fixture network (build exactly this):
@@ -334,10 +336,12 @@ Exact inverse of the resolver table (§3.5), emitting the **target's native synt
 - One in-flight write per device (per-device async lock); writes rejected with a clear error when the device is offline.
 
 ### 5.4 Frontend
-- Clicking an output port opens the slot editor drawer: enable/disable toggle, URL list where each row shows the parsed summary ("→ Hall · Relay 0 · on · 30s") or the raw URL if external/unparsed.
+- Clicking an output port — or an action row in the device drawer — opens the slot editor drawer: enable/disable toggle, URL list where each row shows the parsed summary ("→ Hall · Relay 0 · on · 30s") or the raw URL if external/unparsed.
 - "Add URL" launches the wizard steps from §4 (target type → device → channel → command → params). **Test** button per row fires `POST /api/url/test` and shows the HTTP result inline. Unparsed rows show "Rebuild with wizard".
 - Optimistic-lock guard: the drawer stores the slot state it loaded; if a re-scan changed the device config meanwhile, save is blocked with "device changed — reload".
-- On successful save the graph updates from the API response alone (no full re-scan).
+- On successful save the graph updates from the API response alone (no full re-scan). A save that
+  leaves the slot disabled says so, because the new edges are then hidden unless "show inactive
+  actions" is on — otherwise a successful write looks like nothing happened.
 
 ### 5.5 Demo mode in Phase 2
 `DEMO_MODE=true` supports the full editing flow: writes mutate the fixture DB only and are marked `simulated` in `audit_log`; `POST /api/url/test` returns a fake 200 after 150 ms. Every Phase 2 UI flow must be exercisable in demo mode.

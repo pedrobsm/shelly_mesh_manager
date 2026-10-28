@@ -59,16 +59,18 @@ async def rebuild_edges(db: Database) -> int:
                 result.status,
             )
         )
-    await db.execute("DELETE FROM edges")
-    await db.executemany(
-        """
-        INSERT INTO edges (
-          id, action_url_id, src_slot_id, target_type, target_device_id, target_channel_id,
-          external_host, external_path, command, params, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        records,
-    )
+    # One transaction: a concurrent rebuild must not land between the two.
+    async with db.transaction() as connection:
+        await connection.execute("DELETE FROM edges")
+        await connection.executemany(
+            """
+            INSERT INTO edges (
+              id, action_url_id, src_slot_id, target_type, target_device_id, target_channel_id,
+              external_host, external_path, command, params, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            records,
+        )
     return len(records)
 
 
